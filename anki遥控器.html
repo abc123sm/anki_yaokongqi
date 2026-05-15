@@ -132,7 +132,7 @@ async function resolveMedia(html, side) {
                     const mime = mimeMap[ext] || 'audio/mpeg';
                     // 仅在首次加载（正面）时自动播放
                     let autoplay = side === 'question' ? 'autoplay' : '';
-                    audioHtml += `<audio controls ${autoplay} src="data:${mime};base64,${base64}" style="max-width: 100%; height: 40px;"></audio>`;
+                    audioHtml += `<audio ${autoplay} src="data:${mime};base64,${base64}"></audio>`;
                 }
             } catch(e) { console.error("音频加载失败", filename, e); }
         }
@@ -180,10 +180,17 @@ async function renderCard(side) {
     
     cardEl.innerHTML = `
         <style>${css}</style>
-        <div style="color:#aaa; margin-bottom:15px; font-size:0.85em; text-align: left; border-bottom: 1px solid #444; padding-bottom: 5px;">
-            📚 ${currentCard.deckName} | 📝 ${currentCard.modelName} | 👁️ ${side === 'question' ? '正面' : '背面'}
-        </div>
-        <div class="card">
+        <style>
+            /* 注入自定义样式覆盖模板默认行为，强行隔离防止原模板CSS错误污染 */
+            body, html { background-color: #1a1a1a !important; color: #8B8878 !important; }
+            #card-area { background-color: #1a1a1a !important; }
+            /* 将卡片背景改为全透明，跟随外层的深灰色夜间背景 */
+            .card { background-color: transparent !important; color: #8B8878 !important; }
+            .copy-btn { display: none !important; }
+            button[onclick*="pycmd"] { display: none !important; }
+            .replay-button { display: none !important; }
+        </style>
+        <div class="card nightMode">
             ${resolvedHtml}
         </div>
     `;
