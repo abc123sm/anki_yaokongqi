@@ -1,180 +1,229 @@
 <!DOCTYPE html>
 <html>
+
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-<title>Anki 遥控器</title>
-<style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: sans-serif; padding: 10px; background: #1a1a1a; color: #eee; }
-    #card-area {
-        background: #2a2a2a;
-        border-radius: 10px;
-        padding: 15px;
-        margin-bottom: 20px;
-        min-height: 300px;
-        font-size: 1.1em;
-        line-height: 1.6;
-        overflow-y: auto;
-    }
-    #card-area img { max-width: 100%; height: auto; display: block; margin: 0 auto; }
-    #card-area video { max-width: 100%; }
-    .buttons {
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        gap: 10px;
-    }
-    button {
-        padding: 15px;
-        font-size: 1.1em;
-        border: none;
-        border-radius: 10px;
-        cursor: pointer;
-        font-weight: bold;
-    }
-    .again { background: #e74c3c; color: white; }
-    .good { background: #2ecc71; color: white; }
-    .audio { background: #3498db; color: white; }
-    .ai { background: #9b59b6; color: white; }
-    #status { text-align: center; margin-top: 10px; color: #888; font-size: 0.9em; }
-    /* 卡片内部的样式会通过 <style> 注入 */
-</style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Anki 遥控器</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: sans-serif;
+            padding: 10px;
+            background: #1a1a1a;
+            color: #eee;
+        }
+
+        #card-area {
+            background: #2a2a2a;
+            border-radius: 10px;
+            padding: 15px;
+            margin-bottom: 20px;
+            min-height: 300px;
+            font-size: 1.1em;
+            line-height: 1.6;
+            overflow-y: auto;
+        }
+
+        #card-area img {
+            max-width: 100%;
+            height: auto;
+            display: block;
+            margin: 0 auto;
+        }
+
+        #card-area video {
+            max-width: 100%;
+        }
+
+        .buttons {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+        }
+
+        button {
+            padding: 15px;
+            font-size: 1.1em;
+            border: none;
+            border-radius: 10px;
+            cursor: pointer;
+            font-weight: bold;
+        }
+
+        .again {
+            background: #e74c3c;
+            color: white;
+        }
+
+        .good {
+            background: #2ecc71;
+            color: white;
+        }
+
+        .audio {
+            background: #3498db;
+            color: white;
+        }
+
+        .ai {
+            background: #9b59b6;
+            color: white;
+        }
+
+        /* 以后调试时，可以把 display: none; 删掉即可重新显示状态栏 */
+        #status {
+            display: none;
+            text-align: center;
+            margin-top: 10px;
+            color: #888;
+            font-size: 0.9em;
+        }
+
+        /* 卡片内部的样式会通过 <style> 注入 */
+    </style>
 </head>
+
 <body>
 
-<div id="card-area">🔄 连接中...</div>
+    <div id="card-area">🔄 连接中...</div>
 
-<div class="buttons">
-    <button class="again" onclick="rate(1)">❌ Again (1)</button>
-    <button class="good" onclick="rate(3)">✅ Good (3)</button>
-    <button class="audio" onclick="replayAudioOnPhone()">🔊 手机播音</button>
-    <button class="ai" onclick="triggerAI()">🤖 AI 生成</button>
-</div>
+    <div class="buttons">
+        <button class="again" onclick="rate(1)">❌ Again (1)</button>
+        <button class="good" onclick="rate(3)">✅ Good (3)</button>
+        <button class="audio" onclick="replayAudioOnPhone()">🔊 手机播音</button>
+        <button class="ai" onclick="triggerAI()">🤖 AI 生成</button>
+    </div>
 
-<div id="status"></div>
+    <div id="status"></div>
 
-<script>
-const ANKI_URL = 'http://127.0.0.1:8765';  // 改成电脑的实际IP
-const AI_EXT_URL = ANKI_URL.replace('8765', '8766') + '/trigger-ai';
+    <script>
+        const ANKI_URL = 'http://127.0.0.1:8765';  // 改成电脑的实际IP
+        const AI_EXT_URL = ANKI_URL.replace('8765', '8766') + '/trigger-ai';
 
-async function anki(action, params = {}) {
-    const res = await fetch(ANKI_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action, params, version: 6 })
-    });
-    const data = await res.json();
-    if (data.error) throw new Error(data.error);
-    return data.result;
-}
+        async function anki(action, params = {}) {
+            const res = await fetch(ANKI_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action, params, version: 6 })
+            });
+            const data = await res.json();
+            if (data.error) throw new Error(data.error);
+            return data.result;
+        }
 
-let currentCard = null;
-let currentSide = 'question';
+        let currentCard = null;
+        let currentSide = 'question';
 
-// 处理媒体文件：把 img src 替换为 base64，并提取 fields 里的音频
-async function resolveMedia(html, side) {
-    // 移除 Anki 自动生成的占位符 [anki:play:...]
-    html = html.replace(/\[anki:play:[a-z]:\d+\]/g, '');
+        // 处理媒体文件：把 img src 替换为 base64，并提取 fields 里的音频
+        async function resolveMedia(html, side) {
+            // 移除 Anki 自动生成的占位符 [anki:play:...]
+            html = html.replace(/\[anki:play:[a-z]:\d+\]/g, '');
 
-    const parser = new DOMParser();
-    const doc = parser.parseFromString(html, 'text/html');
-    const mediaTags = doc.querySelectorAll('img[src], video[src], source[src]');
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(html, 'text/html');
+            const mediaTags = doc.querySelectorAll('img[src], video[src], source[src]');
 
-    for (let el of mediaTags) {
-        let src = el.getAttribute('src');
-        if (!src || src.startsWith('data:') || src.startsWith('http')) continue;
-        
-        try {
-            let filename = decodeURIComponent(src);
-            const base64 = await anki('retrieveMediaFile', { filename: filename });
-            if (base64 && !base64.startsWith('data:')) {
-                const ext = filename.split('.').pop().toLowerCase();
-                const mimeMap = { 
-                    mp4:'video/mp4', webm:'video/webm',
-                    jpg:'image/jpeg', jpeg:'image/jpeg',
-                    png:'image/png', gif:'image/gif', svg:'image/svg+xml', webp:'image/webp' 
-                };
-                const mime = mimeMap[ext] || 'application/octet-stream';
-                el.setAttribute('src', `data:${mime};base64,${base64}`);
-            } else if (base64) {
-                el.setAttribute('src', base64);
+            for (let el of mediaTags) {
+                let src = el.getAttribute('src');
+                if (!src || src.startsWith('data:') || src.startsWith('http')) continue;
+
+                try {
+                    let filename = decodeURIComponent(src);
+                    const base64 = await anki('retrieveMediaFile', { filename: filename });
+                    if (base64 && !base64.startsWith('data:')) {
+                        const ext = filename.split('.').pop().toLowerCase();
+                        const mimeMap = {
+                            mp4: 'video/mp4', webm: 'video/webm',
+                            jpg: 'image/jpeg', jpeg: 'image/jpeg',
+                            png: 'image/png', gif: 'image/gif', svg: 'image/svg+xml', webp: 'image/webp'
+                        };
+                        const mime = mimeMap[ext] || 'application/octet-stream';
+                        el.setAttribute('src', `data:${mime};base64,${base64}`);
+                    } else if (base64) {
+                        el.setAttribute('src', base64);
+                    }
+                } catch (e) { console.error("图片加载失败", src, e); }
             }
-        } catch(e) { console.error("图片加载失败", src, e); }
-    }
-    
-    let finalHtml = doc.body.innerHTML;
 
-    // 从字段中提取音频 [sound:xxx.mp3]
-    if (currentCard && currentCard.fields) {
-        let audioHtml = '<div style="margin-top: 15px; display: flex; flex-direction: column; gap: 5px;">';
-        let audioFiles = [];
-        for (let key in currentCard.fields) {
-            let val = currentCard.fields[key].value;
-            let matches = val.match(/\[sound:(.*?)\]/g);
-            if (matches) {
-                for (let m of matches) {
-                    let filename = m.match(/\[sound:(.*?)\]/)[1];
-                    if (!audioFiles.includes(filename)) audioFiles.push(filename);
+            let finalHtml = doc.body.innerHTML;
+
+            // 从字段中提取音频 [sound:xxx.mp3]
+            if (currentCard && currentCard.fields) {
+                let audioHtml = '<div style="margin-top: 15px; display: flex; flex-direction: column; gap: 5px;">';
+                let audioFiles = [];
+                for (let key in currentCard.fields) {
+                    let val = currentCard.fields[key].value;
+                    let matches = val.match(/\[sound:(.*?)\]/g);
+                    if (matches) {
+                        for (let m of matches) {
+                            let filename = m.match(/\[sound:(.*?)\]/)[1];
+                            if (!audioFiles.includes(filename)) audioFiles.push(filename);
+                        }
+                    }
+                }
+
+                for (let filename of audioFiles) {
+                    try {
+                        const base64 = await anki('retrieveMediaFile', { filename: filename });
+                        if (base64) {
+                            const ext = filename.split('.').pop().toLowerCase();
+                            const mimeMap = { mp3: 'audio/mpeg', ogg: 'audio/ogg', wav: 'audio/wav', m4a: 'audio/mp4', opus: 'audio/ogg' };
+                            const mime = mimeMap[ext] || 'audio/mpeg';
+                            // 仅在首次加载（正面）时自动播放
+                            let autoplay = side === 'question' ? 'autoplay' : '';
+                            audioHtml += `<audio ${autoplay} src="data:${mime};base64,${base64}"></audio>`;
+                        }
+                    } catch (e) { console.error("音频加载失败", filename, e); }
+                }
+                audioHtml += '</div>';
+                finalHtml += audioHtml;
+            }
+
+            return finalHtml;
+        }
+
+        async function renderCard(side) {
+            if (!currentCard) return;
+            currentSide = side;
+            const statusEl = document.getElementById('status');
+            const cardEl = document.getElementById('card-area');
+            statusEl.textContent = '加载媒体中...';
+
+            let rawHtml = side === 'question' ? currentCard.question : currentCard.answer;
+
+            // ----- 核心修复：绕过 Anki 渲染缓存 -----
+            // 由于 Anki 的 HTML 缓存机制，刚更新的 note 往往来不及刷新在 answer HTML 中。
+            // 但 currentCard.fields 总是包含数据库中的最新数据！
+            // 因此我们通过虚拟 DOM，将最新字段强行灌入 Edit Field 的占位符中。
+            if (currentCard.fields) {
+                try {
+                    let tempDiv = document.createElement('div');
+                    tempDiv.innerHTML = rawHtml;
+                    for (let fieldName in currentCard.fields) {
+                        let fieldData = currentCard.fields[fieldName];
+                        let targetElements = tempDiv.querySelectorAll(`[data-field="${fieldName}"]`);
+                        targetElements.forEach(el => {
+                            el.innerHTML = fieldData.value;
+                        });
+                    }
+                    rawHtml = tempDiv.innerHTML;
+                } catch (e) {
+                    console.error("DOM 解析覆盖失败:", e);
                 }
             }
-        }
-        
-        for (let filename of audioFiles) {
-            try {
-                const base64 = await anki('retrieveMediaFile', { filename: filename });
-                if (base64) {
-                    const ext = filename.split('.').pop().toLowerCase();
-                    const mimeMap = { mp3:'audio/mpeg', ogg:'audio/ogg', wav:'audio/wav', m4a:'audio/mp4', opus:'audio/ogg' };
-                    const mime = mimeMap[ext] || 'audio/mpeg';
-                    // 仅在首次加载（正面）时自动播放
-                    let autoplay = side === 'question' ? 'autoplay' : '';
-                    audioHtml += `<audio ${autoplay} src="data:${mime};base64,${base64}"></audio>`;
-                }
-            } catch(e) { console.error("音频加载失败", filename, e); }
-        }
-        audioHtml += '</div>';
-        finalHtml += audioHtml;
-    }
+            // ----------------------------------------
 
-    return finalHtml;
-}
+            let css = currentCard.css || '';
 
-async function renderCard(side) {
-    if (!currentCard) return;
-    currentSide = side;
-    const statusEl = document.getElementById('status');
-    const cardEl = document.getElementById('card-area');
-    statusEl.textContent = '加载媒体中...';
-    
-    let rawHtml = side === 'question' ? currentCard.question : currentCard.answer;
+            const resolvedHtml = await resolveMedia(rawHtml, side);
 
-    // ----- 核心修复：绕过 Anki 渲染缓存 -----
-    // 由于 Anki 的 HTML 缓存机制，刚更新的 note 往往来不及刷新在 answer HTML 中。
-    // 但 currentCard.fields 总是包含数据库中的最新数据！
-    // 因此我们通过虚拟 DOM，将最新字段强行灌入 Edit Field 的占位符中。
-    if (currentCard.fields) {
-        try {
-            let tempDiv = document.createElement('div');
-            tempDiv.innerHTML = rawHtml;
-            for (let fieldName in currentCard.fields) {
-                let fieldData = currentCard.fields[fieldName];
-                let targetElements = tempDiv.querySelectorAll(`[data-field="${fieldName}"]`);
-                targetElements.forEach(el => {
-                    el.innerHTML = fieldData.value;
-                });
-            }
-            rawHtml = tempDiv.innerHTML;
-        } catch (e) {
-            console.error("DOM 解析覆盖失败:", e);
-        }
-    }
-    // ----------------------------------------
-
-    let css = currentCard.css || '';
-    
-    const resolvedHtml = await resolveMedia(rawHtml, side);
-    
-    cardEl.innerHTML = `
+            cardEl.innerHTML = `
         <style>${css}</style>
         <style>
             /* 注入自定义样式覆盖模板默认行为，强行隔离防止原模板CSS错误污染 */
@@ -190,119 +239,120 @@ async function renderCard(side) {
             ${resolvedHtml}
         </div>
     `;
-    statusEl.textContent = '✅ 就绪';
-}
+            statusEl.textContent = '✅ 就绪';
+        }
 
-async function loadCard(retries = 3) {
-    const statusEl = document.getElementById('status');
-    const cardEl = document.getElementById('card-area');
-    try {
-        statusEl.textContent = '加载中...';
-        let card = null;
-        for (let i = 0; i < retries; i++) {
+        async function loadCard(retries = 3) {
+            const statusEl = document.getElementById('status');
+            const cardEl = document.getElementById('card-area');
             try {
-                card = await anki('guiCurrentCard');
-                break; // 成功则跳出循环
-            } catch (err) {
-                // 拦截复习状态暂离错误（通常是因为Anki后台在重建队列）
-                if (err.message && err.message.includes('Gui review is not currently active') && i < retries - 1) {
-                    console.warn(`Anki 队列重建中，等待 500ms 后重试 (${i + 1}/${retries})...`);
-                    await new Promise(r => setTimeout(r, 500));
-                    continue;
+                statusEl.textContent = '加载中...';
+                let card = null;
+                for (let i = 0; i < retries; i++) {
+                    try {
+                        card = await anki('guiCurrentCard');
+                        break; // 成功则跳出循环
+                    } catch (err) {
+                        // 拦截复习状态暂离错误（通常是因为Anki后台在重建队列）
+                        if (err.message && err.message.includes('Gui review is not currently active') && i < retries - 1) {
+                            console.warn(`Anki 队列重建中，等待 500ms 后重试 (${i + 1}/${retries})...`);
+                            await new Promise(r => setTimeout(r, 500));
+                            continue;
+                        }
+                        throw err; // 其他错误或重试耗尽则抛出
+                    }
                 }
-                throw err; // 其他错误或重试耗尽则抛出
+
+                if (!card || card.error) {
+                    cardEl.innerHTML = '📭 当前没有正在学习的卡片';
+                    statusEl.textContent = '';
+                    currentCard = null;
+                    return;
+                }
+
+                // 如果卡片没有切换（比如生成完AI后重新拉取），则保持当前停留在正面还是背面
+                let targetSide = 'question';
+                if (currentCard && currentCard.cardId === card.cardId) {
+                    targetSide = currentSide;
+                }
+
+                currentCard = card;
+                await renderCard(targetSide);
+            } catch (err) {
+                cardEl.innerHTML = `⚠️ 错误: ${err.message}`;
+                statusEl.textContent = '❌ 连接失败';
             }
         }
-        
-        if (!card || card.error) {
-            cardEl.innerHTML = '📭 当前没有正在学习的卡片';
-            statusEl.textContent = '';
-            currentCard = null;
-            return;
+
+        async function showAnswer() {
+            try {
+                await anki('guiShowAnswer'); // 电脑端也同步翻面
+                if (currentCard) {
+                    await renderCard('answer');
+                }
+            } catch (err) {
+                document.getElementById('status').textContent = '显示答案失败: ' + err.message;
+            }
         }
-        
-        // 如果卡片没有切换（比如生成完AI后重新拉取），则保持当前停留在正面还是背面
-        let targetSide = 'question';
-        if (currentCard && currentCard.cardId === card.cardId) {
-            targetSide = currentSide;
+
+        async function rate(ease) {
+            if (currentSide === 'question') {
+                await showAnswer();
+                return;
+            }
+            try {
+                await anki('guiAnswerCard', { ease });
+                await loadCard();  // 自动加载下一张
+            } catch (err) {
+                document.getElementById('status').textContent = '评分失败: ' + err.message;
+            }
         }
-        
-        currentCard = card;
-        await renderCard(targetSide);
-    } catch (err) {
-        cardEl.innerHTML = `⚠️ 错误: ${err.message}`;
-        statusEl.textContent = '❌ 连接失败';
-    }
-}
 
-async function showAnswer() {
-    try {
-        await anki('guiShowAnswer'); // 电脑端也同步翻面
-        if (currentCard) {
-            await renderCard('answer');
+        function replayAudioOnPhone() {
+            const audios = document.querySelectorAll('audio');
+            if (audios.length > 0) {
+                audios.forEach(a => {
+                    a.currentTime = 0;
+                    a.play().catch(e => console.log("播音失败:", e));
+                });
+                document.getElementById('status').textContent = '🔊 手机重播中';
+                setTimeout(() => document.getElementById('status').textContent = '✅ 就绪', 1500);
+            } else {
+                document.getElementById('status').textContent = '⚠️ 当前没有音频';
+            }
         }
-    } catch (err) {
-        document.getElementById('status').textContent = '显示答案失败: ' + err.message;
-    }
-}
 
-async function rate(ease) {
-    if (currentSide === 'question') {
-        await showAnswer();
-        return;
-    }
-    try {
-        await anki('guiAnswerCard', { ease });
-        await loadCard();  // 自动加载下一张
-    } catch (err) {
-        document.getElementById('status').textContent = '评分失败: ' + err.message;
-    }
-}
+        async function triggerAI() {
+            document.getElementById('status').textContent = '🤖 AI 触发中，请稍候 (可能需要几秒钟)...';
+            try {
+                await fetch(AI_EXT_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
 
-function replayAudioOnPhone() {
-    const audios = document.querySelectorAll('audio');
-    if (audios.length > 0) {
-        audios.forEach(a => {
-            a.currentTime = 0;
-            a.play().catch(e => console.log("播音失败:", e));
-        });
-        document.getElementById('status').textContent = '🔊 手机重播中';
-        setTimeout(() => document.getElementById('status').textContent = '✅ 就绪', 1500);
-    } else {
-        document.getElementById('status').textContent = '⚠️ 当前没有音频';
-    }
-}
+                // 此时由于后端加入了阻塞等待机制，只要 fetch 返回，就说明 Anki 数据库已绝对更新完毕
+                document.getElementById('status').textContent = '✅ 已生成，正在刷新卡片...';
+                await loadCard();
+                document.getElementById('status').textContent = '✅ AI 刷新完成';
 
-async function triggerAI() {
-    document.getElementById('status').textContent = '🤖 AI 触发中，请稍候 (可能需要几秒钟)...';
-    try {
-        await fetch(AI_EXT_URL, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' }
-        });
-        
-        // 此时由于后端加入了阻塞等待机制，只要 fetch 返回，就说明 Anki 数据库已绝对更新完毕
-        document.getElementById('status').textContent = '✅ 已生成，正在刷新卡片...';
-        await loadCard();
-        document.getElementById('status').textContent = '✅ AI 刷新完成';
-        
-    } catch(e) {
-        document.getElementById('status').textContent = 'AI 触发失败 (请确保插件已更新并重启 Anki): ' + e.message;
-    }
-}
+            } catch (e) {
+                document.getElementById('status').textContent = 'AI 触发失败 (请确保插件已更新并重启 Anki): ' + e.message;
+            }
+        }
 
-// 页面加载
-window.pycmd = async function(cmd) {
-    // 拦截卡片原生的 AI 按钮
-    if (cmd.includes('aiGenerate') || cmd.includes('CF_aiGenerate')) {
-        await triggerAI();
-        return;
-    }
-    document.getElementById('status').textContent = '⚠️ 无法远程触发卡片按钮 (AnkiConnect 不支持 pycmd)';
-    console.warn("被拦截的 pycmd 指令:", cmd, "原因: AnkiConnect 官方接口不支持远程执行插件命令。");
-};
+        // 页面加载
+        window.pycmd = async function (cmd) {
+            // 拦截卡片原生的 AI 按钮
+            if (cmd.includes('aiGenerate') || cmd.includes('CF_aiGenerate')) {
+                await triggerAI();
+                return;
+            }
+            document.getElementById('status').textContent = '⚠️ 无法远程触发卡片按钮 (AnkiConnect 不支持 pycmd)';
+            console.warn("被拦截的 pycmd 指令:", cmd, "原因: AnkiConnect 官方接口不支持远程执行插件命令。");
+        };
 
-loadCard();
-</script>
+        loadCard();
+    </script>
 </body>
+
 </html>
