@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Anki 遥控器</title>
+<style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: sans-serif; padding: 10px; background: #1a1a1a; color: #eee; }
+    #card-area {
+        background: #2a2a2a;
+        border-radius: 10px;
+        padding: 15px;
+        margin-bottom: 20px;
+        min-height: 300px;
+        font-size: 1.1em;
+        line-height: 1.6;
+        overflow-y: auto;
+    }
+    #card-area img { max-width: 100%; height: auto; }
+    #card-area video { max-width: 100%; }
+    .buttons {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+    }
+    button {
+        padding: 18px;
+        font-size: 1.2em;
+        border: none;
+        border-radius: 10px;
+        cursor: pointer;
+        font-weight: bold;
+    }
+    .again { background: #e74c3c; color: white; }
+    .good { background: #2ecc71; color: white; }
+    .audio { background: #3498db; color: white; }
+    .ai { background: #9b59b6; color: white; grid-column: span 2; }
+    .refresh { background: #555; color: white; grid-column: span 2; margin-top: 5px; }
+    #status { text-align: center; margin-top: 10px; color: #888; font-size: 0.9em; }
+</style>
+</head>
+<body>
+
+<div id="card-area">🔄 连接中...</div>
+
+<div class="buttons">
+    <button class="again" onclick="rate(1)">❌ Again (1)</button>
+    <button class="good" onclick="rate(3)">✅ Good (3)</button>
+    <button class="audio" onclick="replayAudio()">🔊 重播音频</button>
+    <button class="ai" onclick="triggerAI()">🤖 AI 生成</button>
+    <button class="refresh" onclick="loadCard()">🔄 刷新卡片</button>
+</div>
+
+<div id="status"></div>
+
+<script>
+const ANKI_URL = 'http://127.0.0.1:8765';  // 改成你电脑的实际IP
+
+async function anki(action, params = {}) {
+    const res = await fetch(ANKI_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action, params, version: 6 })
+    });
+    const data = await res.json();
+    if (data.error) throw new Error(data.error);
+    return data.result;
+}
+
+// 处理媒体文件：把 src="xxx.mp3/img.jpg" 替换为 base64 数据
+async function resolveMedia(html) {
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(html, 'text/html');
+    const mediaTags = doc.querySelectorAll('img[src], video[src], source[src], audio[src]');
+
+    for (let el of mediaTags) {
+        const src = el.getAttribute('src');
+        if (!src || src.startsWith('data:') || src.startsWith('http')) continue;
+        try {
+            const base64 = await anki('retrieveMediaFile', { filename: src });
+            if (base64 && !base64.startsWith('data:')) {
+                // 猜 MIME 类型
+                const ext = src.split('.').pop().toLowerCase();
+                const mimeMap = { mp3:'audio/mpeg', mp4:'video/mp4', webm:'video/webm',
+                    ogg:'audio/ogg', wav:'audio/wav', jpg:'image/jpeg', jpeg:'image/jpeg',
+                    png:'image/png', gif:'image/gif', svg:'image/svg+xml', webp:'image/webp' };
+                const mime = mimeMap[ext] || 'application/octet-stream';
+                el.setAttribute('src', `data:${mime};base64,${base64}`);
+            } else if (base64) {
+                el.setAttribute('src', base64);
+            }
+        } catch(e) { /* 忽略获取失败的媒体 */ }
+    }
+    return doc.body.innerHTML;
+}
+
+async function loadCard() {
+    const statusEl = document.getElementById('status');
+    const cardEl = document.getElementById('card-area');
+    try {
+        statusEl.textContent = '加载中...';
+        const card = await anki('guiCurrentCard');
+        if (!card || card.error) {
+            cardEl.innerHTML = '📭 当前没有正在学习的卡片';
+            statusEl.textContent = '';
+            return;
+        }
+
+        // 找到主要字段内容（通常是正面或第一个字段）
+        let rawHtml = '';
+        const fields = card.fields;
+        // 优先显示 Front 字段，否则显示第一个字段
+        const frontField = fields.Front || fields['正面'] || Object.values(fields)[0];
+        rawHtml = frontField?.value || '';
+
+        // 处理媒体
+        const resolvedHtml = await resolveMedia(rawHtml);
+        cardEl.innerHTML = `
+            <div style="color:#aaa; margin-bottom:10px; font-size:0.85em;">
+                📚 ${card.deckName} | 📝 ${card.modelName}
+            </div>
+            ${resolvedHtml}
+        `;
+        statusEl.textContent = '✅ 就绪';
+    } catch (err) {
+        cardEl.innerHTML = `⚠️ 错误: ${err.message}`;
+        statusEl.textContent = '❌ 连接失败';
+    }
+}
+
+async function rate(ease) {
+    try {
+        await anki('guiAnswerCard', { ease });
+        loadCard();  // 自动加载下一张
+    } catch (err) {
+        document.getElementById('status').textContent = '评分失败: ' + err.message;
+    }
+}
+
+async function replayAudio() {
+    try {
+        await anki('eval', { script: 'mw.reviewer.replayAudio()' });
+        document.getElementById('status').textContent = '🔊 已重播';
+        setTimeout(() => document.getElementById('status').textContent = '✅ 就绪', 1500);
+    } catch(e) {
+        document.getElementById('status').textContent = '重播失败: ' + e.message;
+    }
+}
+
+async function triggerAI() {
+    try {
+        await anki('eval', { script: 'mw.reviewer.web.eval("pycmd(\'CF_aiGenerate\')")' });
+        document.getElementById('status').textContent = '🤖 AI 处理中...';
+        // 等 1 秒后刷新卡片内容
+        setTimeout(async () => {
+            await loadCard();
+            document.getElementById('status').textContent = '✅ AI 完成';
+        }, 1000);
+    } catch(e) {
+        document.getElementById('status').textContent = 'AI 触发失败: ' + e.message;
+    }
+}
+
+// 页面加载
+loadCard();
+</script>
+</body>
+</html>
