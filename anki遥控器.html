@@ -58,7 +58,8 @@
 <div id="status"></div>
 
 <script>
-const ANKI_URL = 'http://127.0.0.1:8765';  // 改成你电脑的实际IP
+const ANKI_URL = 'http://127.0.0.1:8765';  // 改成电脑的实际IP
+const AI_EXT_URL = ANKI_URL.replace('8765', '8766') + '/trigger-ai';
 
 async function anki(action, params = {}) {
     const res = await fetch(ANKI_URL, {
@@ -72,6 +73,7 @@ async function anki(action, params = {}) {
 }
 
 let currentCard = null;
+let currentSide = 'question';
 
 // 处理媒体文件：把 img src 替换为 base64，并提取 fields 里的音频
 async function resolveMedia(html, side) {
@@ -143,11 +145,35 @@ async function resolveMedia(html, side) {
 
 async function renderCard(side) {
     if (!currentCard) return;
+    currentSide = side;
     const statusEl = document.getElementById('status');
     const cardEl = document.getElementById('card-area');
     statusEl.textContent = '加载媒体中...';
     
     let rawHtml = side === 'question' ? currentCard.question : currentCard.answer;
+
+    // ----- 核心修复：绕过 Anki 渲染缓存 -----
+    // 由于 Anki 的 HTML 缓存机制，刚更新的 note 往往来不及刷新在 answer HTML 中。
+    // 但 currentCard.fields 总是包含数据库中的最新数据！
+    // 因此我们通过虚拟 DOM，将最新字段强行灌入 Edit Field 的占位符中。
+    if (currentCard.fields) {
+        try {
+            let tempDiv = document.createElement('div');
+            tempDiv.innerHTML = rawHtml;
+            for (let fieldName in currentCard.fields) {
+                let fieldData = currentCard.fields[fieldName];
+                let targetElements = tempDiv.querySelectorAll(`[data-field="${fieldName}"]`);
+                targetElements.forEach(el => {
+                    el.innerHTML = fieldData.value;
+                });
+            }
+            rawHtml = tempDiv.innerHTML;
+        } catch (e) {
+            console.error("DOM 解析覆盖失败:", e);
+        }
+    }
+    // ----------------------------------------
+
     let css = currentCard.css || '';
     
     const resolvedHtml = await resolveMedia(rawHtml, side);
@@ -176,8 +202,15 @@ async function loadCard() {
             currentCard = null;
             return;
         }
+        
+        // 如果卡片没有切换（比如生成完AI后重新拉取），则保持当前停留在正面还是背面
+        let targetSide = 'question';
+        if (currentCard && currentCard.cardId === card.cardId) {
+            targetSide = currentSide;
+        }
+        
         currentCard = card;
-        await renderCard('question');
+        await renderCard(targetSide);
     } catch (err) {
         cardEl.innerHTML = `⚠️ 错误: ${err.message}`;
         statusEl.textContent = '❌ 连接失败';
@@ -219,19 +252,34 @@ function replayAudioOnPhone() {
 }
 
 async function triggerAI() {
+    document.getElementById('status').textContent = '🤖 AI 触发中，请稍候 (可能需要几秒钟)...';
     try {
-        await anki('eval', { script: 'mw.reviewer.web.eval("pycmd(\'CF_aiGenerate\')")' });
-        document.getElementById('status').textContent = '🤖 AI 处理中...';
-        setTimeout(async () => {
-            await loadCard();
-            document.getElementById('status').textContent = '✅ AI 完成';
-        }, 1000);
+        await fetch(AI_EXT_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' }
+        });
+        
+        // 此时由于后端加入了阻塞等待机制，只要 fetch 返回，就说明 Anki 数据库已绝对更新完毕
+        document.getElementById('status').textContent = '✅ 已生成，正在刷新卡片...';
+        await loadCard();
+        document.getElementById('status').textContent = '✅ AI 刷新完成';
+        
     } catch(e) {
-        document.getElementById('status').textContent = 'AI 触发失败: ' + e.message;
+        document.getElementById('status').textContent = 'AI 触发失败 (请确保插件已更新并重启 Anki): ' + e.message;
     }
 }
 
 // 页面加载
+window.pycmd = async function(cmd) {
+    // 拦截卡片原生的 AI 按钮
+    if (cmd.includes('aiGenerate') || cmd.includes('CF_aiGenerate')) {
+        await triggerAI();
+        return;
+    }
+    document.getElementById('status').textContent = '⚠️ 无法远程触发卡片按钮 (AnkiConnect 不支持 pycmd)';
+    console.warn("被拦截的 pycmd 指令:", cmd, "原因: AnkiConnect 官方接口不支持远程执行插件命令。");
+};
+
 loadCard();
 </script>
 </body>
