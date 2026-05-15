@@ -41,40 +41,6 @@
             max-width: 100%;
         }
 
-        .buttons {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 10px;
-        }
-
-        button {
-            padding: 15px;
-            font-size: 1.1em;
-            border: none;
-            border-radius: 10px;
-            cursor: pointer;
-            font-weight: bold;
-        }
-
-        .again {
-            background: #e74c3c;
-            color: white;
-        }
-
-        .good {
-            background: #2ecc71;
-            color: white;
-        }
-
-        .audio {
-            background: #3498db;
-            color: white;
-        }
-
-        .ai {
-            background: #9b59b6;
-            color: white;
-        }
 
         /* 以后调试时，可以把 display: none; 删掉即可重新显示状态栏 */
         #status {
@@ -93,12 +59,6 @@
 
     <div id="card-area">🔄 连接中...</div>
 
-    <div class="buttons">
-        <button class="again" onclick="rate(1)">❌ Again (1)</button>
-        <button class="good" onclick="rate(3)">✅ Good (3)</button>
-        <button class="audio" onclick="replayAudioOnPhone()">🔊 手机播音</button>
-        <button class="ai" onclick="triggerAI()">🤖 AI 生成</button>
-    </div>
 
     <div id="status"></div>
 
@@ -221,7 +181,10 @@
 
             let css = currentCard.css || '';
 
-            const resolvedHtml = await resolveMedia(rawHtml, side);
+            let resolvedHtml = await resolveMedia(rawHtml, side);
+            
+            // 移除可能由快捷编辑插件生成的 contenteditable 属性，防止弹出键盘
+            resolvedHtml = resolvedHtml.replace(/contenteditable="?[^">]*"?/gi, '');
 
             cardEl.innerHTML = `
         <style>${css}</style>
@@ -339,6 +302,61 @@
                 document.getElementById('status').textContent = 'AI 触发失败 (请确保插件已更新并重启 Anki): ' + e.message;
             }
         }
+
+        // 全局九宫格点击处理与防连点 (500ms)
+        let lastClickTime = 0;
+        
+        // 使用 true 在捕获阶段拦截，防止事件先到达卡片内部的插件
+        document.addEventListener('click', function(e) {
+            // 忽略目标为链接或多媒体的点击，避免影响卡片原生交互
+            const tag = e.target.tagName.toLowerCase();
+            if (tag === 'a' || tag === 'audio' || tag === 'video' || tag === 'button' || e.target.closest('a')) {
+                return;
+            }
+
+            // 阻止事件向下传递和默认行为，彻底切断卡片内“快捷编辑”插件的点击监听
+            e.stopPropagation();
+            e.preventDefault();
+
+            const now = Date.now();
+            if (now - lastClickTime < 500) {
+                return; // 防连点节流
+            }
+            lastClickTime = now;
+
+            const x = e.clientX;
+            const y = e.clientY;
+            const width = window.innerWidth;
+            const height = window.innerHeight;
+
+            const col = Math.floor(x / (width / 3)); // 0, 1, 2
+            const row = Math.floor(y / (height / 3)); // 0, 1, 2
+            
+            // 计算小键盘数字 (789 在顶，123 在底)
+            const numpad = (2 - row) * 3 + col + 1;
+
+            switch(numpad) {
+                case 1:
+                case 3:
+                    rate(3);
+                    break;
+                case 4:
+                case 6:
+                    rate(1);
+                    break;
+                case 2:
+                    replayAudioOnPhone();
+                    break;
+                case 5:
+                    triggerAI();
+                    break;
+                case 7:
+                case 8:
+                case 9:
+                    // 暂不做任何操作
+                    break;
+            }
+        }, true);
 
         // 页面加载
         window.pycmd = async function (cmd) {
