@@ -6,6 +6,20 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <title>Anki 遥控器</title>
     <style>
+        :root {
+            /* ========================================== */
+            /* 📱 手机端专属字体大小调整 (仅在此修改即可生效) */
+            /* ========================================== */
+            --font-size-card: 30px;
+            /* 基础卡片字体大小 (对应 .card 和 .card.nightMode) */
+            --font-size-jp-text: 35px;
+            /* 日文字体大小 (对应 .jp-text) */
+            --font-size-zhushi: 18px;
+            /* 注释字体大小 (对应 .zhushi) */
+            --font-size-expression: 28px;
+            /* 中文字体大小 (对应 .expression) */
+        }
+
         * {
             box-sizing: border-box;
             margin: 0;
@@ -182,7 +196,7 @@
             let css = currentCard.css || '';
 
             let resolvedHtml = await resolveMedia(rawHtml, side);
-            
+
             // 移除可能由快捷编辑插件生成的 contenteditable 属性，防止弹出键盘
             resolvedHtml = resolvedHtml.replace(/contenteditable="?[^">]*"?/gi, '');
 
@@ -194,6 +208,13 @@
             #card-area { background-color: #1a1a1a !important; }
             /* 将卡片背景改为全透明，跟随外层的深灰色夜间背景 */
             .card { background-color: transparent !important; color: #8B8878 !important; }
+            
+            /* 强制应用我们在顶部定义的手机端专属字体大小 */
+            .card, .card.nightMode { font-size: var(--font-size-card) !important; }
+            .jp-text { font-size: var(--font-size-jp-text) !important; }
+            .zhushi { font-size: var(--font-size-zhushi) !important; }
+            .expression { font-size: var(--font-size-expression) !important; }
+
             .copy-btn { display: none !important; }
             button[onclick*="pycmd"] { display: none !important; }
             .replay-button { display: none !important; }
@@ -305,9 +326,9 @@
 
         // 全局九宫格点击处理与防连点 (500ms)
         let lastClickTime = 0;
-        
+
         // 使用 true 在捕获阶段拦截，防止事件先到达卡片内部的插件
-        document.addEventListener('click', function(e) {
+        document.addEventListener('click', function (e) {
             // 忽略目标为链接或多媒体的点击，避免影响卡片原生交互
             const tag = e.target.tagName.toLowerCase();
             if (tag === 'a' || tag === 'audio' || tag === 'video' || tag === 'button' || e.target.closest('a')) {
@@ -331,11 +352,11 @@
 
             const col = Math.floor(x / (width / 3)); // 0, 1, 2
             const row = Math.floor(y / (height / 3)); // 0, 1, 2
-            
+
             // 计算小键盘数字 (789 在顶，123 在底)
             const numpad = (2 - row) * 3 + col + 1;
 
-            switch(numpad) {
+            switch (numpad) {
                 case 1:
                 case 3:
                     rate(3);
