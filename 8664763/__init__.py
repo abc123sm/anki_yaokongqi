@@ -298,18 +298,20 @@ def call_chat_api(question):
         return f"API调用错误: {str(e)}"
 
 
-def generate_ai_response():
-    """生成AI回复 (兼容 Edit Field During Review 插件)"""
+def generate_ai_response_async(on_done=None):
+    """异步生成AI回复，避免阻塞主线程"""
     try:
         # 确保在复习模式下
         if not mw.reviewer or not mw.reviewer.card:
             showInfo("请在复习模式下使用此功能")
+            if on_done: on_done(False)
             return
         
         card = mw.reviewer.card
         note = card.note()
         config = get_config()
         if not config:
+            if on_done: on_done(False)
             return
         
         # 获取问题和回答字段的名称
@@ -319,53 +321,75 @@ def generate_ai_response():
         # 检查字段是否存在
         if question_field not in note:
             showInfo(f"模板中未找到字段 '{question_field}'，请检查配置")
+            if on_done: on_done(False)
             return
         if answer_field not in note:
             showInfo(f"模板中未找到字段 '{answer_field}'，请检查配置")
+            if on_done: on_done(False)
             return
             
         question = note[question_field]
         if not question.strip():
             showInfo(f"字段 '{question_field}' 内容为空")
+            if on_done: on_done(False)
             return
         
-        tooltip("正在向AI提问，请稍候...")
-        mw.app.processEvents()
+        tooltip("🤖 正在向AI提问，请稍候...")
 
-        # 调用API
-        response = call_chat_api(question)
-        
-        # 将换行符 \n 替换为HTML的 <br>
-        response_html = response.replace('\r\n', '<br>').replace('\n', '<br>')
-        
-        if note[answer_field] != response_html:
-            note[answer_field] = response_html
-            note.flush()
-            # 兼容不同版本 Anki 的卡片重载，确保内部数据最新
-            if hasattr(mw.col, "update_note"):
-                mw.col.update_note(note)
-            else:
-                card.load()
-            # 极度关键：必须清除 Anki 的 HTML 渲染缓存！
-            # 否则 AnkiConnect (及 card.a()) 将永远返回生成前的空内容
-            card._a = None
-            card._q = None
-        
-        if mw.reviewer.state == "answer":
-            escaped_html = json.dumps(response_html)
+        # 在后台线程执行网络请求
+        def bg_task():
+            return call_chat_api(question)
             
-            js_code = f"""
-            var field = document.querySelector('[data-field="{answer_field}"]');
-            if (field) {{
-                field.innerHTML = {escaped_html};
-            }}
-            """
-            mw.reviewer.web.eval(js_code)
+        def on_success(future):
+            try:
+                response = future.result()
+                
+                # 如果遇到 API 错误，直接弹窗提示，不写入卡片
+                if response.startswith("API"):
+                    tooltip(f"❌ {response}")
+                    if on_done: on_done(False)
+                    return
+                
+                response_html = response.replace('\r\n', '<br>').replace('\n', '<br>')
+                
+                if note[answer_field] != response_html:
+                    note[answer_field] = response_html
+                    note.flush()
+                    
+                    # 只有当目前仍停留在同一张卡片时，才去刷新界面，防止状态错位
+                    if mw.reviewer and mw.reviewer.card and mw.reviewer.card.id == card.id:
+                        # 兼容不同版本 Anki 的卡片重载，确保内部数据最新
+                        if hasattr(mw.col, "update_note"):
+                            mw.col.update_note(note)
+                        else:
+                            mw.reviewer.card.load()
+                        
+                        # 恢复极度关键的缓存清除，保证兼容性
+                        mw.reviewer.card._a = None
+                        mw.reviewer.card._q = None
+                        
+                        if mw.reviewer.state == "answer":
+                            escaped_html = json.dumps(response_html)
+                            js_code = f"""
+                            var field = document.querySelector('[data-field="{answer_field}"]');
+                            if (field) {{
+                                field.innerHTML = {escaped_html};
+                            }}
+                            """
+                            mw.reviewer.web.eval(js_code)
+                
+                tooltip("✅ AI回复已生成并更新")
+            except Exception as e:
+                showInfo(f"更新卡片出错: {str(e)}")
+            finally:
+                if on_done:
+                    on_done(True)
 
-        tooltip("AI回复已生成并更新")
+        mw.taskman.run_in_background(bg_task, on_success)
         
     except Exception as e:
         showInfo(f"生成AI回复时出错: {str(e)}")
+        if on_done: on_done(False)
 
 
 
@@ -387,7 +411,7 @@ def show_config_dialog():
 # 处理来自前端的消息
 def handle_webview_message(handled, cmd, context):
     if cmd == "CF_aiGenerate":
-        generate_ai_response()
+        generate_ai_response_async()
         return (True, None)
     return handled
 
@@ -415,16 +439,13 @@ class RemoteAIRequestHandler(BaseHTTPRequestHandler):
             # 使用 Event 阻塞等待 AI 在主线程执行完毕
             done_event = threading.Event()
             
-            def run_and_notify():
-                try:
-                    generate_ai_response()
-                finally:
-                    done_event.set()
+            def on_done(success):
+                done_event.set()
 
-            # 在主线程执行 Anki 的 UI/数据操作
-            mw.taskman.run_on_main(run_and_notify)
+            # 在主线程执行异步生成任务
+            mw.taskman.run_on_main(lambda: generate_ai_response_async(on_done))
             
-            # 等待主线程执行完毕 (最多等待 60 秒，防止卡死)
+            # 等待后台任务执行完毕 (最多等待 60 秒，防止卡死)
             done_event.wait(60)
 
             self.send_response(200)

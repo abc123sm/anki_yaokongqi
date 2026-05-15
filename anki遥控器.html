@@ -197,12 +197,27 @@ async function renderCard(side) {
     statusEl.textContent = '✅ 就绪';
 }
 
-async function loadCard() {
+async function loadCard(retries = 3) {
     const statusEl = document.getElementById('status');
     const cardEl = document.getElementById('card-area');
     try {
         statusEl.textContent = '加载中...';
-        const card = await anki('guiCurrentCard');
+        let card = null;
+        for (let i = 0; i < retries; i++) {
+            try {
+                card = await anki('guiCurrentCard');
+                break; // 成功则跳出循环
+            } catch (err) {
+                // 拦截复习状态暂离错误（通常是因为Anki后台在重建队列）
+                if (err.message && err.message.includes('Gui review is not currently active') && i < retries - 1) {
+                    console.warn(`Anki 队列重建中，等待 500ms 后重试 (${i + 1}/${retries})...`);
+                    await new Promise(r => setTimeout(r, 500));
+                    continue;
+                }
+                throw err; // 其他错误或重试耗尽则抛出
+            }
+        }
+        
         if (!card || card.error) {
             cardEl.innerHTML = '📭 当前没有正在学习的卡片';
             statusEl.textContent = '';
