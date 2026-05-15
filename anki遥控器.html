@@ -312,6 +312,9 @@
         }
 
         async function triggerAI() {
+            if (currentSide === 'question') {
+                return;
+            }
             document.getElementById('status').textContent = '🤖 AI 触发中，请稍候 (可能需要几秒钟)...';
             try {
                 await fetch(AI_EXT_URL, {
