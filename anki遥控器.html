@@ -32,12 +32,10 @@
         cursor: pointer;
         font-weight: bold;
     }
-    .show-ans { background: #f39c12; color: white; grid-column: span 2; }
     .again { background: #e74c3c; color: white; }
     .good { background: #2ecc71; color: white; }
     .audio { background: #3498db; color: white; }
     .ai { background: #9b59b6; color: white; }
-    .refresh { background: #555; color: white; grid-column: span 2; margin-top: 5px; }
     #status { text-align: center; margin-top: 10px; color: #888; font-size: 0.9em; }
     /* 卡片内部的样式会通过 <style> 注入 */
 </style>
@@ -47,12 +45,10 @@
 <div id="card-area">🔄 连接中...</div>
 
 <div class="buttons">
-    <button class="show-ans" onclick="showAnswer()">👁️ 显示答案</button>
     <button class="again" onclick="rate(1)">❌ Again (1)</button>
     <button class="good" onclick="rate(3)">✅ Good (3)</button>
     <button class="audio" onclick="replayAudioOnPhone()">🔊 手机播音</button>
     <button class="ai" onclick="triggerAI()">🤖 AI 生成</button>
-    <button class="refresh" onclick="loadCard()">🔄 刷新卡片</button>
 </div>
 
 <div id="status"></div>
@@ -251,6 +247,10 @@ async function showAnswer() {
 }
 
 async function rate(ease) {
+    if (currentSide === 'question') {
+        await showAnswer();
+        return;
+    }
     try {
         await anki('guiAnswerCard', { ease });
         await loadCard();  // 自动加载下一张
