@@ -116,8 +116,14 @@ Anki 遥控器是一个专为移动端设计的轻量级、沉浸式网页界面
 ## 📱 运行截图
 
 <div align="center">
-  <img src="pic/1.jpg" alt="Anki 遥控器手机运行截图">
-  <img src="pic/2.jpg" alt="Anki 遥控器手机运行截图（PWA小程序）">
-  <img src="pic/3.jpg" alt="Anki 遥控器手机运行截图（PWA小程序）">
-  <img src="pic/4.jpg" alt="Anki 遥控器手机运行截图（设置参考）">
+  <table style="max-width: 600px; width: 100%; margin: 0 auto;">
+    <tr>
+      <td style="width: 50%; padding: 5px;"><img src="pic/1.jpg" alt="Anki 遥控器手机运行截图" style="width: 100%; border-radius: 8px;"></td>
+      <td style="width: 50%; padding: 5px;"><img src="pic/2.jpg" alt="Anki 遥控器手机运行截图（PWA小程序）" style="width: 100%; border-radius: 8px;"></td>
+    </tr>
+    <tr>
+      <td style="width: 50%; padding: 5px;"><img src="pic/3.jpg" alt="Anki 遥控器手机运行截图（PWA小程序）" style="width: 100%; border-radius: 8px;"></td>
+      <td style="width: 50%; padding: 5px;"><img src="pic/4.jpg" alt="Anki 遥控器手机运行截图（设置参考）" style="width: 100%; border-radius: 8px;"></td>
+    </tr>
+  </table>
 </div>
