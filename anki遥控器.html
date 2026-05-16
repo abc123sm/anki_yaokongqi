@@ -84,6 +84,19 @@
     <script>
         const ANKI_URL = 'http://127.0.0.1:8765';  // 改成电脑的实际IP
         const AI_EXT_URL = ANKI_URL.replace('8765', '8766') + '/trigger-ai';
+        const TARGET_LUFS = -25; // 目标响度，可自行修改
+
+        // --- 全局 AudioContext ---
+        let audioCtx = null;
+        function getAudioCtx() {
+            if (!audioCtx) {
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            }
+            if (audioCtx.state === 'suspended') {
+                audioCtx.resume();
+            }
+            return audioCtx;
+        }
 
         async function anki(action, params = {}) {
             const res = await fetch(ANKI_URL, {
@@ -154,9 +167,10 @@
                             const ext = filename.split('.').pop().toLowerCase();
                             const mimeMap = { mp3: 'audio/mpeg', ogg: 'audio/ogg', wav: 'audio/wav', m4a: 'audio/mp4', opus: 'audio/ogg' };
                             const mime = mimeMap[ext] || 'audio/mpeg';
-                            // 仅在首次加载（正面）时自动播放
-                            let autoplay = side === 'question' ? 'autoplay' : '';
-                            audioHtml += `<audio ${autoplay} src="data:${mime};base64,${base64}"></audio>`;
+                            // 移除原生 autoplay，改为 Web Audio API 控制
+                            let autoplayAttr = side === 'question' ? 'true' : 'false';
+                            let header = base64.substring(0, 8000);
+                            audioHtml += `<audio data-autoplay="${autoplayAttr}" data-base64="${header}" src="data:${mime};base64,${base64}" class="anki-audio"></audio>`;
                         }
                     } catch (e) { console.error("音频加载失败", filename, e); }
                 }
@@ -228,6 +242,50 @@
             ${resolvedHtml}
         </div>
     `;
+            
+            // --- 绑定 Web Audio API 实现 ReplayGain ---
+            const audios = cardEl.querySelectorAll('.anki-audio');
+            audios.forEach(audio => {
+                const ctx = getAudioCtx();
+                let finalDb = 0;
+                
+                // 解析 ReplayGain
+                const headerBase64 = audio.getAttribute('data-base64');
+                if (headerBase64) {
+                    try {
+                        const chunkStr = atob(headerBase64);
+                        const match = chunkStr.match(/REPLAYGAIN_TRACK_GAIN[^\d+-]*([+-]?\d+\.?\d*)/i);
+                        if (match) {
+                            const trackGain = parseFloat(match[1]);
+                            // ReplayGain 默认基于 -18 LUFS。偏移量 = 目标 LUFS - 基准 LUFS
+                            finalDb = trackGain + (TARGET_LUFS + 18);
+                            console.log(`ReplayGain触发: 文件=${trackGain}dB, Target=${TARGET_LUFS}LUFS, 最终补偿=${finalDb}dB`);
+                        }
+                    } catch (e) {
+                        console.warn("解析 ReplayGain 失败", e);
+                    }
+                }
+                
+                const linearGain = Math.pow(10, finalDb / 20);
+                
+                // 挂载节点
+                const source = ctx.createMediaElementSource(audio);
+                const gainNode = ctx.createGain();
+                gainNode.gain.value = linearGain;
+                
+                source.connect(gainNode);
+                gainNode.connect(ctx.destination);
+                
+                // 缓存节点防止 GC 导致声音断裂
+                audio._sourceNode = source;
+                audio._gainNode = gainNode;
+                
+                // 根据标记触发自动播放
+                if (audio.getAttribute('data-autoplay') === 'true') {
+                    audio.play().catch(e => console.log("播放失败 (可能需要交互以解除限制):", e));
+                }
+            });
+
             statusEl.textContent = '✅ 就绪';
         }
 
@@ -298,6 +356,7 @@
         }
 
         function replayAudioOnPhone() {
+            getAudioCtx(); // 确保重播时唤醒 AudioContext
             const audios = document.querySelectorAll('audio');
             if (audios.length > 0) {
                 audios.forEach(a => {
@@ -371,6 +430,8 @@
             // 阻止事件向下传递和默认行为，彻底切断卡片内“快捷编辑”插件的点击监听
             e.stopPropagation();
             e.preventDefault();
+
+            getAudioCtx(); // 用户触屏强制唤醒音频上下文
 
             const now = Date.now();
             if (now - lastActionTime < 500) {
