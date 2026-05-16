@@ -61,7 +61,8 @@ Anki 遥控器是一个专为移动端设计的轻量级、沉浸式网页界面
 本项目提供了两种使用方式，推荐使用全新的**网络通用版**：
 
 **方式一：使用可视化通用版 (推荐)**
-👉 **免部署公益服务直接可用：[https://anki-yaokongqi.qf-channel.eu.org](https://anki-yaokongqi.qf-channel.eu.org)**
+👉 **免部署公益服务直接可用：[Anki 遥控器](https://anki-yaokongqi.qf-channel.eu.org)**
+*(本项目通过 Cloudflare Pages 进行自动化部署与托管，感谢 Cloudflare 提供的优质服务。)*
 
 *（如果你希望自己本地运行/部署，请按以下步骤操作：）*
 1. 在电脑上开启一个简易 HTTP 服务（例如 `python -m http.server 9999`）或者将 `index.html` 及相关文件部署到你的个人域名。
@@ -129,3 +130,18 @@ Anki 遥控器是一个专为移动端设计的轻量级、沉浸式网页界面
     </tr>
   </table>
 </div>
+
+---
+
+## 📞 技术支持 / Support
+
+如遇到问题，请：
+1. 自行询问AI，deepseek gemini 豆包 元宝 chatgpt 或者别的什么都可以
+2. 提交Issue到项目仓库
+3. 进频道的讨论群问[Subs2SRS频道](https://t.me/Subs2srs)
+
+## ⭐ 小星星 / Star History
+
+[![Star History Chart](https://api.star-history.com/svg?repos=abc123sm/anki_yaokongqi&type=Date)](https://star-history.com/#abc123sm/anki_yaokongqi&Date)
+
+**特别感谢**：本项目部署于 **Cloudflare Pages**，感谢其提供的稳定公益托管服务。

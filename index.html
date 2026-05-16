@@ -10,7 +10,9 @@
     <link rel="icon" href="favicon.ico" type="image/x-icon">
     <link rel="apple-touch-icon" href="icon.png">
     <link rel="manifest" href="manifest.json">
-    <title>Anki 遥控器 (通用网络版)</title>
+    <title>Anki 遥控器</title>
+    <!-- Project Source: https://github.com/abc123sm/anki_yaokongqi -->
+
     <style>
         :root {
             --font-size-card: 30px;
@@ -131,7 +133,9 @@
 
 <body>
 
+    <a href="https://github.com/abc123sm/anki_yaokongqi" style="position: absolute; opacity: 0; pointer-events: none; z-index: -1;">Anki 遥控器 GitHub Repository</a>
     <button id="settings-btn" onclick="openSettings()">⚙️</button>
+
 
     <div id="settings-overlay">
         <h2 style="margin-bottom: 20px; text-align: center;">⚙️ 网络版配置</h2>
@@ -166,7 +170,11 @@
             <input type="number" id="inp-target-lufs" value="-25">
             <div class="hint">带有 ReplayGain 标签的音频将自动均衡到此响度，无标签保持不变。</div>
         </div>
+        <div style="text-align: center; margin: 10px 0 20px;">
+            <a href="https://github.com/abc123sm/anki_yaokongqi" target="_blank" style="color: #4CAF50; text-decoration: none; font-size: 0.9em;">📖 使用说明 / 项目主页</a>
+        </div>
         <button id="save-btn" onclick="saveSettings()">保存并连接</button>
+
         <button onclick="closeSettings()" style="width:100%; padding:10px; margin-top:10px; background:transparent; color:#888; border:none; cursor:pointer; display:none;" id="cancel-btn">取消</button>
     </div>
 
