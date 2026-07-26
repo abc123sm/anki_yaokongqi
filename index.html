@@ -170,6 +170,11 @@
             <input type="number" id="inp-target-lufs" value="-25">
             <div class="hint">带有 ReplayGain 标签的音频将自动均衡到此响度，无标签保持不变。</div>
         </div>
+        <div class="setup-group">
+            <label>TTS 朗读音量 (0.0 ~ 1.0, 默认 0.6)</label>
+            <input type="number" id="inp-tts-volume" step="0.1" min="0" max="1" value="0.6">
+            <div class="hint">降低 TTS 朗读音量，避免比响度均衡后的卡片音频声大（0.6 即 60% 音量）。</div>
+        </div>
         <div class="setup-group" style="display: flex; align-items: center; gap: 10px;">
             <input type="checkbox" id="inp-remote-mode" style="width: 20px; height: 20px; cursor: pointer;">
             <label for="inp-remote-mode" style="margin-bottom: 0; cursor: pointer; user-select: none;">开启遥控器模式</label>
@@ -189,6 +194,7 @@
         let ANKI_URL = '';
         let AI_EXT_URL = '';
         let TARGET_LUFS = -25;
+        let ttsVolume = 0.6;
         let isRemoteMode = false;
 
         // --- 全局 AudioContext ---
@@ -215,6 +221,7 @@
             document.getElementById('inp-font-zh').value = config.fontZh || 28;
             document.getElementById('inp-font-ruby').value = config.fontRuby || 18;
             document.getElementById('inp-target-lufs').value = config.targetLufs || -25;
+            document.getElementById('inp-tts-volume').value = config.ttsVolume !== undefined ? config.ttsVolume : 0.6;
             document.getElementById('inp-remote-mode').checked = config.remoteMode || false;
             
             document.getElementById('cancel-btn').style.display = saved ? 'block' : 'none';
@@ -253,6 +260,7 @@
                 fontZh: document.getElementById('inp-font-zh').value,
                 fontRuby: document.getElementById('inp-font-ruby').value,
                 targetLufs: document.getElementById('inp-target-lufs').value || -25,
+                ttsVolume: isNaN(parseFloat(document.getElementById('inp-tts-volume').value)) ? 0.6 : parseFloat(document.getElementById('inp-tts-volume').value),
                 remoteMode: document.getElementById('inp-remote-mode').checked
             };
             
@@ -750,6 +758,7 @@
             const utterance = new SpeechSynthesisUtterance(text);
             utterance.lang = 'zh-CN';
             utterance.rate = 1.0;
+            utterance.volume = ttsVolume;
 
             document.getElementById('status').textContent = '🗣️ 正在朗读中文...';
             utterance.onend = () => {
@@ -841,6 +850,7 @@
                 document.documentElement.style.setProperty('--font-size-expression', config.fontZh + 'px');
                 document.documentElement.style.setProperty('--font-size-zhushi', config.fontRuby + 'px');
                 TARGET_LUFS = parseFloat(config.targetLufs) || -25;
+                ttsVolume = (config.ttsVolume !== undefined && !isNaN(parseFloat(config.ttsVolume))) ? parseFloat(config.ttsVolume) : 0.6;
                 isRemoteMode = config.remoteMode || false;
                 
                 closeSettings();

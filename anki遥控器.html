@@ -88,11 +88,15 @@
         const AI_EXT_URL = ANKI_URL.replace('8765', '8766') + '/trigger-ai';
         const TARGET_LUFS = -25; // 目标响度，可自行修改
         let isRemoteMode = false;
+        let ttsVolume = 0.6;
         try {
             const saved = localStorage.getItem('anki_remote_config');
             if (saved) {
                 const config = JSON.parse(saved);
                 isRemoteMode = config.remoteMode === true || config.remoteMode === 'true';
+                if (config.ttsVolume !== undefined && !isNaN(parseFloat(config.ttsVolume))) {
+                    ttsVolume = parseFloat(config.ttsVolume);
+                }
             }
         } catch (e) {
             console.warn("读取配置失败", e);
@@ -568,6 +572,7 @@
             const utterance = new SpeechSynthesisUtterance(text);
             utterance.lang = 'zh-CN';
             utterance.rate = 1.0;
+            utterance.volume = ttsVolume;
 
             document.getElementById('status').textContent = '🗣️ 正在朗读中文...';
             utterance.onend = () => {
