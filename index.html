@@ -716,10 +716,25 @@
                 return;
             }
 
-            let text = exprEl.textContent.trim();
-            // 去除 sound 标签和 Anki 自动播放标签
+            // 克隆节点以进行 DOM 预过滤，避免破坏原本的页面渲染
+            const clone = exprEl.cloneNode(true);
+
+            // 1. 移除不应朗读的 HTML 标签：script, style, button, audio, video
+            const unneededTags = clone.querySelectorAll('script, style, button, audio, video');
+            unneededTags.forEach(el => el.remove());
+
+            // 2. 移除所有拥有隐藏类或含有 pycmd 点击事件的节点
+            const unneededClasses = clone.querySelectorAll('.copy-btn, .replay-button, [onclick*="pycmd"], [style*="display: none"], [style*="display:none"]');
+            unneededClasses.forEach(el => el.remove());
+
+            let text = clone.textContent.trim();
+
+            // 3. 正则清洗：除去 sound 标签、anki play 标签、pycmd 代码残留模式及 this data $ 模式
             text = text.replace(/\[sound:[^\]]*\]/g, '')
                        .replace(/\[anki:play:[^\]]*\]/g, '')
+                       .replace(/pycmd\([^)]*\)/gi, '')
+                       .replace(/this\s+data\s*\$?[^]*$/gi, '')
+                       .replace(/\s+/g, ' ')
                        .trim();
 
             if (!text) {
