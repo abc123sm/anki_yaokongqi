@@ -416,12 +416,6 @@
             const tag = e.target.tagName.toLowerCase();
             if (tag === 'input' || tag === 'textarea') return;
 
-            // 遥控器模式下拦截播放暂停键触发 TTS
-            if (isRemoteMode && e.key === 'MediaPlayPause') {
-                e.preventDefault();
-                speakChinese();
-                return;
-            }
 
             const key = e.key.toLowerCase();
             const validKeys = ['1', '3', '4', '6', 'r', ' ', 'enter'];
