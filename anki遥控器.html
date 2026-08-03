@@ -33,6 +33,11 @@
             padding: 0;
         }
 
+        html, body {
+            touch-action: none;
+            overscroll-behavior: none;
+        }
+
         body {
             font-family: sans-serif;
             padding: 10px;
@@ -588,6 +593,11 @@
             
             startX = e.touches[0].clientX;
             startY = e.touches[0].clientY;
+        }, { passive: false });
+
+        document.addEventListener('touchmove', function(e) {
+            if (!isRemoteMode) return;
+            e.preventDefault(); // 拦截手势拖拽，彻底切断移动端浏览器的下拉刷新行为
         }, { passive: false });
 
         document.addEventListener('touchend', function(e) {
