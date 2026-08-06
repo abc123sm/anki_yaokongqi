@@ -27,7 +27,7 @@
             padding: 0;
         }
 
-        html, body {
+        body.remote-mode {
             touch-action: none;
             overscroll-behavior: none;
         }
@@ -857,6 +857,7 @@
                 TARGET_LUFS = parseFloat(config.targetLufs) || -25;
                 ttsVolume = (config.ttsVolume !== undefined && !isNaN(parseFloat(config.ttsVolume))) ? parseFloat(config.ttsVolume) : 0.6;
                 isRemoteMode = config.remoteMode || false;
+                document.body.classList.toggle('remote-mode', isRemoteMode);
                 
                 closeSettings();
                 loadCard();

@@ -33,7 +33,7 @@
             padding: 0;
         }
 
-        html, body {
+        body.remote-mode {
             touch-action: none;
             overscroll-behavior: none;
         }
@@ -106,6 +106,7 @@
         } catch (e) {
             console.warn("读取配置失败", e);
         }
+        document.body.classList.toggle('remote-mode', isRemoteMode);
 
         // --- 全局 AudioContext ---
         let audioCtx = null;
