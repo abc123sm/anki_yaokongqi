@@ -596,6 +596,25 @@
 
 
             const key = e.key.toLowerCase();
+            
+            if (key === 'mediaplaypause') {
+                e.preventDefault();
+                const now = Date.now();
+                if (now - lastActionTime < 500) return;
+                lastActionTime = now;
+                
+                if (currentSide === 'question') {
+                    showAnswer();
+                } else {
+                    if (typeof AI_EXT_URL !== 'undefined' && AI_EXT_URL) {
+                        triggerAI();
+                    } else {
+                        document.getElementById('status').textContent = '⚠️ 未配置 AI 触发器地址';
+                    }
+                }
+                return;
+            }
+
             const validKeys = ['1', '3', '4', '6', 'r', ' ', 'enter'];
             if (!validKeys.includes(key)) return;
 
@@ -829,9 +848,11 @@
                 } else {
                     // 垂直滑动
                     if (dy > 0) {
-                        // 向下滑动（上方向键）：正面时翻面，背面时 TTS
+                        // 向下滑动（上方向键）：正面时翻面+TTS，背面时仅 TTS
                         if (currentSide === 'question') {
-                            showAnswer();
+                            showAnswer().then(() => {
+                                setTimeout(speakChinese, 100);
+                            });
                         } else {
                             speakChinese();
                         }
