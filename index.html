@@ -318,9 +318,9 @@
             const doc = parser.parseFromString(html, 'text/html');
             const mediaTags = doc.querySelectorAll('img[src], video[src], source[src]');
 
-            for (let el of mediaTags) {
+            const mediaPromises = Array.from(mediaTags).map(async (el) => {
                 let src = el.getAttribute('src');
-                if (!src || src.startsWith('data:') || src.startsWith('http')) continue;
+                if (!src || src.startsWith('data:') || src.startsWith('http')) return;
 
                 try {
                     let filename = decodeURIComponent(src);
@@ -338,13 +338,11 @@
                         el.setAttribute('src', base64);
                     }
                 } catch (e) { console.error("图片加载失败", src, e); }
-            }
-
-            let finalHtml = doc.body.innerHTML;
+            });
 
             // 从字段中提取音频 [sound:xxx.mp3]
+            let audioPromises = [];
             if (currentCard && currentCard.fields) {
-                let audioHtml = '<div style="margin-top: 15px; display: flex; flex-direction: column; gap: 5px;">';
                 let audioFiles = [];
                 for (let key in currentCard.fields) {
                     let val = currentCard.fields[key].value;
@@ -357,7 +355,7 @@
                     }
                 }
 
-                for (let filename of audioFiles) {
+                audioPromises = audioFiles.map(async (filename) => {
                     try {
                         const base64 = await anki('retrieveMediaFile', { filename: filename });
                         if (base64) {
@@ -367,10 +365,24 @@
                             // 移除原生 autoplay，改为 Web Audio API 控制
                             let autoplayAttr = side === 'question' ? 'true' : 'false';
                             let header = base64.substring(0, 8000);
-                            audioHtml += `<audio data-autoplay="${autoplayAttr}" data-base64="${header}" src="data:${mime};base64,${base64}" class="anki-audio"></audio>`;
+                            return `<audio data-autoplay="${autoplayAttr}" data-base64="${header}" src="data:${mime};base64,${base64}" class="anki-audio"></audio>`;
                         }
-                    } catch (e) { console.error("音频加载失败", filename, e); }
-                }
+                    } catch (e) { 
+                        console.error("音频加载失败", filename, e); 
+                    }
+                    return "";
+                });
+            }
+
+            // 等待所有图片和音频请求并行执行完毕
+            await Promise.all([...mediaPromises, ...audioPromises]);
+
+            let finalHtml = doc.body.innerHTML;
+
+            if (audioPromises.length > 0) {
+                const audioHtmlArray = await Promise.all(audioPromises);
+                let audioHtml = '<div style="margin-top: 15px; display: flex; flex-direction: column; gap: 5px;">';
+                audioHtml += audioHtmlArray.join('');
                 audioHtml += '</div>';
                 finalHtml += audioHtml;
             }
