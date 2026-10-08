@@ -30,7 +30,9 @@ DEFAULT_CONFIG = {
     { "role": "assistant", "content": "来[き]た！：表示出现，\"来了！\"\n腹[はら]を：指决心或意志，\"心意\"\n決[き]めやがった：表示下决心（带有粗鲁或不屑的语气），\"下定了\"\n来了！他下定决心了。" },
     { "role": "user", "content": "負けるのが分かってる　皿を出すのが怖いんだ" },
     { "role": "assistant", "content": "負[ま]けるのが：表示失败，\"会输\"\n分[わ]かってる：表示已知晓，\"知道了\"\n皿[さら]を：指要下的棋子或牌，\"盘子（棋子）\"\n出[だ]すのが：表示拿出或下，\"拿出来\"\n怖[こわ]いんだ：表示心情，\"很害怕\"\n知道会输，所以不敢下棋（出牌）。" }
-  ]
+  ],
+  "auto_custom_study": True,
+  "new_cards_increase": 999
 }
 
 
@@ -123,6 +125,15 @@ class ConfigDialog(QDialog):
         
         self.answer_field = QLineEdit(config["answer_field"])
         form_layout.addRow("回答字段:", self.answer_field)
+
+        self.auto_custom_study = QCheckBox("今日新卡学完后自动提升新卡上限继续（永不停歇）")
+        self.auto_custom_study.setChecked(config.get("auto_custom_study", True))
+        form_layout.addRow("自动提升新卡:", self.auto_custom_study)
+
+        self.new_cards_increase = QSpinBox()
+        self.new_cards_increase.setRange(1, 99999)
+        self.new_cards_increase.setValue(config.get("new_cards_increase", 999))
+        form_layout.addRow("每次提升新卡数:", self.new_cards_increase)
         
         self.layout.addLayout(form_layout)
         
@@ -201,6 +212,8 @@ class ConfigDialog(QDialog):
                 "system_prompt": self.system_prompt.toPlainText(),
                 "question_field": self.question_field.text(),
                 "answer_field": self.answer_field.text(),
+                "auto_custom_study": self.auto_custom_study.isChecked(),
+                "new_cards_increase": self.new_cards_increase.value(),
                 "context_messages": []
             }
             
@@ -422,7 +435,68 @@ webview_did_receive_js_message.append(handle_webview_message)
 # 初始化
 setup_menu()
 
-# ----------------- 远程控制扩展 -----------------
+# ----------------- 自动提升新卡上限与连续学习 -----------------
+
+def execute_custom_study_new_cards(deck_id=None, extra_count=999):
+    """
+    针对当前牌组纯粹提升今日新卡片上限（new_limit_delta），
+    绝不触碰复习卡（不增加复习上限、不提前复习）。
+    若成功释放出新卡，则切入 review 状态继续复习。
+    返回 (bool success, str message)
+    """
+    if not mw.col or not mw.col.sched:
+        return False, "Anki 数据库未加载"
+
+    if deck_id is None:
+        deck_id = mw.col.decks.get_current_id()
+    if not deck_id:
+        return False, "未获取到有效牌组"
+
+    from anki.scheduler import CustomStudyRequest
+
+    try:
+        req_new = CustomStudyRequest(deck_id=deck_id)
+        req_new.new_limit_delta = extra_count
+        mw.col.sched.custom_study(req_new)
+    except Exception as e:
+        print(f"[Anki遥控器] 提升今日新卡上限异常: {e}")
+        return False, str(e)
+
+    counts = mw.col.sched.counts()
+    if counts[0] > 0 or counts[1] > 0:
+        mw.col.startTimebox()
+        mw.moveToState("review")
+        tooltip(f"🔄 已提升今日新卡上限 +{extra_count}，继续学习新卡！")
+        return True, f"成功提升今日新卡上限 +{extra_count}，继续复习"
+    else:
+        return False, "牌组中已无更多未学新卡"
+
+_last_auto_study_time = 0
+
+def on_overview_did_refresh(overview):
+    global _last_auto_study_time
+    config = get_config()
+    if not config.get("auto_custom_study", True):
+        return
+    if mw.state != "overview" or not mw.col or not mw.col.sched:
+        return
+
+    # 检查当前牌组是否处于新卡学完的恭喜状态
+    if mw.col.sched._is_finished():
+        now = time.time()
+        # 节流防抖 1.5 秒，避免重复触发
+        if now - _last_auto_study_time < 1.5:
+            return
+        _last_auto_study_time = now
+
+        extra = config.get("new_cards_increase", 999)
+        # 延迟到下一个 Qt 事件循环执行，防止在 overview 渲染内部重入
+        QTimer.singleShot(50, lambda: execute_custom_study_new_cards(extra_count=extra))
+
+from aqt.gui_hooks import overview_did_refresh
+overview_did_refresh.append(on_overview_did_refresh)
+
+# ----------------- 远程控制扩展服务 -----------------
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
@@ -453,6 +527,58 @@ class RemoteAIRequestHandler(BaseHTTPRequestHandler):
             self.send_header('Content-Type', 'application/json')
             self.end_headers()
             self.wfile.write(b'{"result": "success"}')
+        elif self.path == '/auto-continue':
+            result_data = {"result": "success"}
+            done_event = threading.Event()
+
+            def run_continue():
+                try:
+                    # 1. 如果当前已经在 review 状态并且有正在学习的卡片，直接返回
+                    if mw.state == "review" and mw.reviewer and mw.reviewer.card:
+                        result_data["success"] = True
+                        result_data["message"] = "Review 已经处于激活状态"
+                        return
+
+                    if not mw.col or not mw.col.sched:
+                        result_data["success"] = False
+                        result_data["message"] = "Anki 数据库未就绪"
+                        return
+
+                    deck_id = mw.col.decks.get_current_id()
+                    if not deck_id:
+                        result_data["success"] = False
+                        result_data["message"] = "未选定牌组"
+                        return
+
+                    # 2. 如果新的一天到来或者本身已有新卡到期（未学完）
+                    counts = mw.col.sched.counts()
+                    if counts[0] > 0:
+                        mw.col.startTimebox()
+                        mw.moveToState("review")
+                        result_data["success"] = True
+                        result_data["message"] = "检测到已有新卡，已恢复复习"
+                        return
+
+                    # 3. 否则纯粹执行自定义学习提升新卡上限 999
+                    config = get_config()
+                    extra = config.get("new_cards_increase", 999)
+                    success, msg = execute_custom_study_new_cards(deck_id, extra_count=extra)
+                    result_data["success"] = success
+                    result_data["message"] = msg
+                except Exception as e:
+                    result_data["success"] = False
+                    result_data["error"] = str(e)
+                finally:
+                    done_event.set()
+
+            mw.taskman.run_on_main(run_continue)
+            done_event.wait(10)
+
+            self.send_response(200)
+            self.send_header('Access-Control-Allow-Origin', '*')
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            self.wfile.write(json.dumps(result_data).encode('utf-8'))
         else:
             self.send_response(404)
             self.end_headers()

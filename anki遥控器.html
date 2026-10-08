@@ -323,6 +323,22 @@
             statusEl.textContent = '✅ 就绪';
         }
 
+        async function resumeReviewIfNeeded() {
+            if (!AI_EXT_URL) return false;
+            try {
+                const continueUrl = AI_EXT_URL.replace('/trigger-ai', '/auto-continue');
+                const res = await fetch(continueUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+                const data = await res.json();
+                return data && data.success;
+            } catch (e) {
+                console.warn("请求自动恢复复习失败:", e);
+                return false;
+            }
+        }
+
         async function loadCard(retries = 3) {
             const statusEl = document.getElementById('status');
             const cardEl = document.getElementById('card-area');
@@ -334,19 +350,34 @@
                         card = await anki('guiCurrentCard');
                         break; // 成功则跳出循环
                     } catch (err) {
-                        // 拦截复习状态暂离错误（通常是因为Anki后台在重建队列）
-                        if (err.message && err.message.includes('Gui review is not currently active') && i < retries - 1) {
-                            console.warn(`Anki 队列重建中，等待 500ms 后重试 (${i + 1}/${retries})...`);
-                            await new Promise(r => setTimeout(r, 500));
-                            continue;
+                        // 拦截复习未激活错误（通常是因为卡在完成界面、队列重建中，或第二天首次打开）
+                        if (err.message && err.message.includes('Gui review is not currently active')) {
+                            console.warn(`Anki 复习未处于激活状态，尝试自动唤醒/提升新卡继续 (${i + 1}/${retries})...`);
+                            // 尝试调用后台插件唤醒或提升新卡上限
+                            const resumed = await resumeReviewIfNeeded();
+                            if (resumed) {
+                                await new Promise(r => setTimeout(r, 600));
+                                try {
+                                    card = await anki('guiCurrentCard');
+                                    if (card && !card.error) {
+                                        break;
+                                    }
+                                } catch (e) {
+                                    console.warn("唤醒后拉取卡片重试中...", e);
+                                }
+                            }
+                            if (i < retries - 1) {
+                                await new Promise(r => setTimeout(r, 500));
+                                continue;
+                            }
                         }
                         throw err; // 其他错误或重试耗尽则抛出
                     }
                 }
 
                 if (!card || card.error) {
-                    cardEl.innerHTML = '📭 当前没有正在学习的卡片';
-                    statusEl.textContent = '';
+                    cardEl.innerHTML = '<div style="text-align: center; padding: 40px 10px;">🎉 今日新卡已全部学完<br><br><span style="font-size: 0.7em; color: #888;">(点击屏幕或按任意键可再次尝试刷新唤醒)</span></div>';
+                    statusEl.textContent = '今日新卡已学完';
                     currentCard = null;
                     return;
                 }
@@ -360,12 +391,16 @@
                 currentCard = card;
                 await renderCard(targetSide);
             } catch (err) {
-                cardEl.innerHTML = `⚠️ 错误: ${err.message}`;
+                cardEl.innerHTML = `⚠️ 错误: ${err.message}<br><br><span style="font-size: 0.7em; color: #888;">(点击屏幕或按任意键可尝试重新连接与唤醒)</span>`;
                 statusEl.textContent = '❌ 连接失败';
             }
         }
 
         async function showAnswer() {
+            if (!currentCard) {
+                await loadCard();
+                return;
+            }
             try {
                 await anki('guiShowAnswer'); // 电脑端也同步翻面
                 if (currentCard) {
@@ -377,6 +412,10 @@
         }
 
         async function rate(ease) {
+            if (!currentCard) {
+                await loadCard();
+                return;
+            }
             if (currentSide === 'question') {
                 await showAnswer();
                 return;
