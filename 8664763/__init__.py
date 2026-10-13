@@ -435,7 +435,7 @@ webview_did_receive_js_message.append(handle_webview_message)
 # 初始化
 setup_menu()
 
-# ----------------- 自动提升新卡上限与连续学习 -----------------
+# ----------------- 自动提升新卡上限与原地无感连续学习 -----------------
 
 def execute_custom_study_new_cards(deck_id=None, extra_count=999):
     """
@@ -471,30 +471,45 @@ def execute_custom_study_new_cards(deck_id=None, extra_count=999):
     else:
         return False, "牌组中已无更多未学新卡"
 
-_last_auto_study_time = 0
+# 原地拦截 Reviewer 队列耗尽时刻，彻底避免退出 Reviewer 导致 SvelteKit 页面请求中断
+from aqt.reviewer import Reviewer
 
-def on_overview_did_refresh(overview):
-    global _last_auto_study_time
+orig_get_next_v3_card = Reviewer._get_next_v3_card
+
+def patched_get_next_v3_card(self) -> None:
+    orig_get_next_v3_card(self)
+    
+    # 若已有下一张卡片，直接正常展示
+    if self.card:
+        return
+
+    # 若队列耗尽（卡片为空），且启用了自动提升新卡上限
     config = get_config()
     if not config.get("auto_custom_study", True):
         return
-    if mw.state != "overview" or not mw.col or not mw.col.sched:
+    if not self.mw.col or not self.mw.col.sched:
         return
 
-    # 检查当前牌组是否处于新卡学完的恭喜状态
-    if mw.col.sched._is_finished():
-        now = time.time()
-        # 节流防抖 1.5 秒，避免重复触发
-        if now - _last_auto_study_time < 1.5:
-            return
-        _last_auto_study_time = now
+    deck_id = self.mw.col.decks.get_current_id()
+    if not deck_id:
+        return
 
-        extra = config.get("new_cards_increase", 999)
-        # 延迟到下一个 Qt 事件循环执行，防止在 overview 渲染内部重入
-        QTimer.singleShot(50, lambda: execute_custom_study_new_cards(extra_count=extra))
+    extra = config.get("new_cards_increase", 999)
+    from anki.scheduler import CustomStudyRequest
+    try:
+        req_new = CustomStudyRequest(deck_id=deck_id)
+        req_new.new_limit_delta = extra
+        self.mw.col.sched.custom_study(req_new)
+    except Exception as e:
+        print(f"[Anki遥控器] 原地提升新卡上限异常: {e}")
+        return
 
-from aqt.gui_hooks import overview_did_refresh
-overview_did_refresh.append(on_overview_did_refresh)
+    # 再次尝试提取新放行的新卡，原地继续
+    orig_get_next_v3_card(self)
+    if self.card:
+        tooltip(f"🔄 已自动提升今日新卡上限 +{extra}，继续学习新卡！")
+
+Reviewer._get_next_v3_card = patched_get_next_v3_card
 
 # ----------------- 远程控制扩展服务 -----------------
 import threading
@@ -505,7 +520,8 @@ class RemoteAIRequestHandler(BaseHTTPRequestHandler):
         self.send_response(200, "ok")
         self.send_header('Access-Control-Allow-Origin', '*')
         self.send_header('Access-Control-Allow-Methods', 'POST, OPTIONS')
-        self.send_header("Access-Control-Allow-Headers", "X-Requested-With, Content-Type")
+        self.send_header("Access-Control-Allow-Headers", "*")
+        self.send_header('Access-Control-Allow-Private-Network', 'true')
         self.end_headers()
 
     def do_POST(self):
@@ -524,6 +540,7 @@ class RemoteAIRequestHandler(BaseHTTPRequestHandler):
 
             self.send_response(200)
             self.send_header('Access-Control-Allow-Origin', '*')
+            self.send_header('Access-Control-Allow-Private-Network', 'true')
             self.send_header('Content-Type', 'application/json')
             self.end_headers()
             self.wfile.write(b'{"result": "success"}')
@@ -576,6 +593,7 @@ class RemoteAIRequestHandler(BaseHTTPRequestHandler):
 
             self.send_response(200)
             self.send_header('Access-Control-Allow-Origin', '*')
+            self.send_header('Access-Control-Allow-Private-Network', 'true')
             self.send_header('Content-Type', 'application/json')
             self.end_headers()
             self.wfile.write(json.dumps(result_data).encode('utf-8'))

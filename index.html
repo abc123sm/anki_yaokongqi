@@ -563,7 +563,11 @@
                 currentCard = card;
                 await renderCard(targetSide);
             } catch (err) {
-                cardEl.innerHTML = `⚠️ 错误: ${err.message}<br><br><span style="font-size: 0.7em; color: #888;">(点击屏幕或按任意键可尝试重新连接与唤醒)</span>`;
+                let msg = err.message || '未知错误';
+                if (msg.includes('Failed to fetch') || msg.includes('NetworkError') || msg.includes('Network')) {
+                    msg = '无法连接到 AnkiConnect，请确保电脑端 Anki 已启动且 IP/端口配置正确';
+                }
+                cardEl.innerHTML = `⚠️ 错误: ${msg}<br><br><button onclick="loadCard()" style="padding: 8px 16px; background: #4CAF50; color: white; border: none; border-radius: 5px; cursor: pointer; font-size: 0.8em;">点击重新连接</button>`;
                 statusEl.textContent = '❌ 连接失败';
             }
         }
