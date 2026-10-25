@@ -551,6 +551,7 @@
                     cardEl.innerHTML = '<div style="text-align: center; padding: 40px 10px;">🎉 今日新卡已全部学完<br><br><span style="font-size: 0.7em; color: #888;">(点击屏幕或按任意键可再次尝试刷新唤醒)</span></div>';
                     statusEl.textContent = '今日新卡已学完';
                     currentCard = null;
+                    currentSide = 'question';
                     return;
                 }
 
@@ -657,6 +658,11 @@
                 const now = Date.now();
                 if (now - lastActionTime < 500) return;
                 lastActionTime = now;
+
+                if (!currentCard) {
+                    loadCard();
+                    return;
+                }
                 
                 if (currentSide === 'question') {
                     showAnswer();
@@ -678,6 +684,11 @@
             const now = Date.now();
             if (now - lastActionTime < 500) return;
             lastActionTime = now;
+
+            if (!currentCard) {
+                loadCard();
+                return;
+            }
 
             if (key === '1' || key === '6') {
                 rate(1);
@@ -703,6 +714,12 @@
                 }
                 e.stopPropagation();
                 e.preventDefault();
+                if (!currentCard) {
+                    const now = Date.now();
+                    if (now - lastActionTime < 500) return;
+                    lastActionTime = now;
+                    loadCard();
+                }
                 return;
             }
 
@@ -723,6 +740,11 @@
                 return; // 防连点节流
             }
             lastActionTime = now;
+
+            if (!currentCard) {
+                loadCard();
+                return;
+            }
 
             const x = e.clientX;
             const y = e.clientY;
@@ -879,6 +901,11 @@
                 const now = Date.now();
                 if (now - lastActionTime < 500) return;
                 lastActionTime = now;
+
+                if (!currentCard) {
+                    loadCard();
+                    return;
+                }
 
                 if (Math.abs(dx) < 10 && Math.abs(dy) < 10) {
                     // 原地点击（下/OK键：重播音频）

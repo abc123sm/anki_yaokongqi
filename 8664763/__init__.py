@@ -437,6 +437,63 @@ setup_menu()
 
 # ----------------- 自动提升新卡上限与原地无感连续学习 -----------------
 
+def boost_new_cards_for_deck_tree(col, deck_id, extra=999):
+    """
+    针对当前牌组树（含顶层父牌组及所有子牌组）纯粹提升今日新卡片上限（new_limit_delta），
+    绝不触碰复习卡（不增加复习上限、不提前复习）。
+    返回 bool 表示是否确实存在未学新卡并成功提升了上限。
+    """
+    if not col or not col.sched or not deck_id:
+        return False
+
+    # 检查当前牌组树（含所有子牌组）是否确实还有未学、未暂停、未掩埋的新卡
+    try:
+        new_cids = col.find_cards("deck:current is:new -is:suspended -is:buried")
+    except Exception:
+        new_cids = []
+
+    if not new_cids:
+        return False
+
+    from anki.scheduler import CustomStudyRequest
+
+    try:
+        undo_before = col.undo_status()
+    except Exception:
+        undo_before = None
+
+    try:
+        # 1. 提升当前选定牌组（如顶层父牌组）的新卡上限
+        req_new = CustomStudyRequest(deck_id=deck_id)
+        req_new.new_limit_delta = extra
+        col.sched.custom_study(req_new)
+
+        # 2. 若当前牌组为父牌组，且因旗下子牌组自身也达到了每日上限导致 counts()[0] 仍为 0，
+        #    则定位第一张可用未学新卡所在的子牌组及其祖先牌组链，一并提升上限以彻底放行
+        counts = col.sched.counts()
+        if counts[0] <= 0:
+            first_card = col.get_card(new_cids[0])
+            target_did = first_card.did
+            parent_dids = [p["id"] for p in col.decks.parents(target_did)]
+            for d in parent_dids + [target_did]:
+                if d != deck_id:
+                    req_sub = CustomStudyRequest(deck_id=d)
+                    req_sub.new_limit_delta = extra
+                    col.sched.custom_study(req_sub)
+
+        # 合并 undo 记录，避免打乱 AnkiMorphs 的后台 merge_undo_entries 状态或污染撤销栈
+        if undo_before is not None and undo_before.last_step > 0 and not undo_before.redo:
+            try:
+                col.merge_undo_entries(undo_before.last_step)
+            except Exception:
+                pass
+
+        return True
+    except Exception as e:
+        print(f"[Anki遥控器] 提升今日新卡上限异常: {e}")
+        return False
+
+
 def execute_custom_study_new_cards(deck_id=None, extra_count=999):
     """
     针对当前牌组纯粹提升今日新卡片上限（new_limit_delta），
@@ -452,113 +509,105 @@ def execute_custom_study_new_cards(deck_id=None, extra_count=999):
     if not deck_id:
         return False, "未获取到有效牌组"
 
-    # 前置守卫：检查牌组中是否确实还有未学新卡，杜绝空刷
-    try:
-        remaining_new = len(mw.col.find_cards(f"did:{deck_id} is:new"))
-    except Exception:
-        remaining_new = 0
-
-    if remaining_new <= 0:
+    if not boost_new_cards_for_deck_tree(mw.col, deck_id, extra_count):
         return False, "牌组中已无更多未学新卡"
 
-    from anki.scheduler import CustomStudyRequest
-
-    try:
-        req_new = CustomStudyRequest(deck_id=deck_id)
-        req_new.new_limit_delta = extra_count
-        mw.col.sched.custom_study(req_new)
-    except Exception as e:
-        print(f"[Anki遥控器] 提升今日新卡上限异常: {e}")
-        return False, str(e)
-
     counts = mw.col.sched.counts()
-    if counts[0] > 0 or counts[1] > 0:
+    if counts[0] > 0 or counts[1] > 0 or counts[2] > 0:
         mw.col.startTimebox()
         mw.moveToState("review")
-        tooltip(f"🔄 已提升今日新卡上限 +{extra_count}，继续学习新卡！")
+        mw.taskman.run_on_main(
+            lambda: tooltip(f"🔄 已提升今日新卡上限 +{extra_count}，继续学习新卡！")
+        )
         return True, f"成功提升今日新卡上限 +{extra_count}，继续复习"
     else:
         return False, "牌组中已无更多未学新卡"
 
-# 优雅解耦拦截 Reviewer.nextCard，确保在上一个答题操作彻底收尾后、在下一个干净的 Qt 循环中安全提升
+
+# 原地拦截 Reviewer._get_next_v3_card（完美兼容 AnkiMorphs 后台线程取卡与原生主线程取卡）
 from aqt.reviewer import Reviewer
 
-orig_next_card = Reviewer.nextCard
-_is_auto_boosting = False  # 全局防重入互斥锁
+orig_get_next_v3_card = Reviewer._get_next_v3_card
 
-def patched_nextCard(self) -> None:
-    global _is_auto_boosting
-    
-    # 正常提取卡片
-    self.previous_card = self.card
-    self.card = None
-    self._v3 = None
-    self._get_next_v3_card()
+def patched_get_next_v3_card(self) -> None:
+    orig_get_next_v3_card(self)
 
-    self._previous_card_info.set_card(self.previous_card)
-    self._card_info.set_card(self.card)
-
-    # 1. 若队列中已有下一张卡片，正常展示
+    # 1. 若队列中已有下一张卡片，直接正常返回
     if self.card:
-        if self._reps is None:
-            self._initWeb()
-        self._showQuestion()
         return
 
-    # 2. 若队列耗尽（卡片为空），检查是否启用了自动提升新卡上限
+    # 2. 若队列耗尽（卡片为空），且启用了自动提升新卡上限
     config = get_config()
-    if not config.get("auto_custom_study", True) or not self.mw.col or not self.mw.col.sched:
-        self.mw.moveToState("overview")
+    if not config.get("auto_custom_study", True):
+        return
+    if not self.mw.col or not self.mw.col.sched:
         return
 
     deck_id = self.mw.col.decks.get_current_id()
     if not deck_id:
-        self.mw.moveToState("overview")
         return
 
-    # 前置守卫：精准检查牌组中是否确实还有未学的新卡（避免无新卡时空刷数据库造成负数累加）
-    try:
-        remaining_new = len(self.mw.col.find_cards(f"did:{deck_id} is:new"))
-    except Exception:
-        remaining_new = 0
-
-    if remaining_new <= 0:
-        # 牌组里确实没有未学新卡了，安全切入完成界面
-        self.mw.moveToState("overview")
-        return
-
-    # 若已经在提升中，避免重入
-    if _is_auto_boosting:
-        return
-
-    _is_auto_boosting = True
     extra = config.get("new_cards_increase", 999)
+    if not boost_new_cards_for_deck_tree(self.mw.col, deck_id, extra):
+        return
 
-    def do_safe_boost():
-        global _is_auto_boosting
-        try:
-            # 确保主窗口仍处于 review 状态且数据库就绪
-            if self.mw.state == "review" and self.mw.col and self.mw.col.sched:
-                from anki.scheduler import CustomStudyRequest
-                req_new = CustomStudyRequest(deck_id=deck_id)
-                req_new.new_limit_delta = extra
-                self.mw.col.sched.custom_study(req_new)
-                tooltip(f"🔄 已自动提升今日新卡上限 +{extra}，继续学习新卡！")
-                # 重新调用 nextCard 提取新放行的新卡，原地无缝继续
-                self.nextCard()
-            else:
-                self.mw.moveToState("overview")
-        except Exception as e:
-            print(f"[Anki遥控器] 自动提升新卡上限异常: {e}")
-            self.mw.moveToState("overview")
-        finally:
-            _is_auto_boosting = False
+    # 3. 再次尝试提取新放行的新卡，原地无缝继续
+    orig_get_next_v3_card(self)
+    if self.card:
+        # 关键修复：AnkiMorphs 等插件会在 QueryOp 后台子线程中调用 _get_next_v3_card，
+        # 严禁在后台子线程直接调用 tooltip() 创建 QLabel/QTimer（会导致 Win32 跨线程 HWND 消息死锁），
+        # 必须通过 taskman.run_on_main 派发回 Qt 主线程安全显示提示！
+        self.mw.taskman.run_on_main(
+            lambda: tooltip(f"🔄 已自动提升今日新卡上限 +{extra}，继续学习新卡！")
+        )
 
-    # 核心解耦关键：通过 QTimer.singleShot(0) 将写数据库与取卡操作推迟到下一个干净的 Qt 事件循环！
-    # 彻底避开当前答题事务的回调生命周期，杜绝 SQLite 锁死，并避免日切（凌晨4:00）定时器重入冲突
-    QTimer.singleShot(0, do_safe_boost)
+Reviewer._get_next_v3_card = patched_get_next_v3_card
 
-Reviewer.nextCard = patched_nextCard
+
+# 跨天换日与 Overview 界面自动恢复兜底（确保即便处于完成界面，换日后或点击牌组时也能自动进入学习状态）
+_last_auto_resume_time = 0
+
+def _try_auto_resume_from_overview():
+    global _last_auto_resume_time
+    config = get_config()
+    if not config.get("auto_custom_study", True):
+        return
+    if mw.state != "overview" or not mw.col or not mw.col.sched:
+        return
+
+    now = time.time()
+    if now - _last_auto_resume_time < 1.0:
+        return
+
+    deck_id = mw.col.decks.get_current_id()
+    if not deck_id:
+        return
+
+    counts = mw.col.sched.counts()
+    if counts[0] > 0 or counts[1] > 0 or counts[2] > 0:
+        _last_auto_resume_time = now
+        mw.col.startTimebox()
+        mw.moveToState("review")
+        return
+
+    extra = config.get("new_cards_increase", 999)
+    if boost_new_cards_for_deck_tree(mw.col, deck_id, extra):
+        counts_after = mw.col.sched.counts()
+        if counts_after[0] > 0 or counts_after[1] > 0 or counts_after[2] > 0:
+            _last_auto_resume_time = now
+            mw.col.startTimebox()
+            mw.moveToState("review")
+            tooltip(f"🔄 已自动提升今日新卡上限 +{extra}，继续学习新卡！")
+
+def on_overview_did_refresh(overview):
+    QTimer.singleShot(50, _try_auto_resume_from_overview)
+
+def on_day_did_change():
+    QTimer.singleShot(50, _try_auto_resume_from_overview)
+
+from aqt.gui_hooks import overview_did_refresh, day_did_change
+overview_did_refresh.append(on_overview_did_refresh)
+day_did_change.append(on_day_did_change)
 
 # ----------------- 远程控制扩展服务 -----------------
 import threading
@@ -625,13 +674,13 @@ class RemoteAIRequestHandler(BaseHTTPRequestHandler):
                         result_data["message"] = "未选定牌组"
                         return
 
-                    # 2. 如果新的一天到来或者本身已有新卡到期（未学完）
+                    # 2. 如果新的一天到来或者本身已有待学卡片（新卡、学习中卡片、复习卡任一大于 0）
                     counts = mw.col.sched.counts()
-                    if counts[0] > 0:
+                    if counts[0] > 0 or counts[1] > 0 or counts[2] > 0:
                         mw.col.startTimebox()
                         mw.moveToState("review")
                         result_data["success"] = True
-                        result_data["message"] = "检测到已有新卡，已恢复复习"
+                        result_data["message"] = "检测到已有待学卡片，已恢复复习"
                         return
 
                     # 3. 否则纯粹执行自定义学习提升新卡上限 999
