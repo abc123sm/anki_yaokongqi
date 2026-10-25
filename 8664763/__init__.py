@@ -452,6 +452,15 @@ def execute_custom_study_new_cards(deck_id=None, extra_count=999):
     if not deck_id:
         return False, "未获取到有效牌组"
 
+    # 前置守卫：检查牌组中是否确实还有未学新卡，杜绝空刷
+    try:
+        remaining_new = len(mw.col.find_cards(f"did:{deck_id} is:new"))
+    except Exception:
+        remaining_new = 0
+
+    if remaining_new <= 0:
+        return False, "牌组中已无更多未学新卡"
+
     from anki.scheduler import CustomStudyRequest
 
     try:
@@ -471,60 +480,108 @@ def execute_custom_study_new_cards(deck_id=None, extra_count=999):
     else:
         return False, "牌组中已无更多未学新卡"
 
-# 原地拦截 Reviewer 队列耗尽时刻，彻底避免退出 Reviewer 导致 SvelteKit 页面请求中断
+# 优雅解耦拦截 Reviewer.nextCard，确保在上一个答题操作彻底收尾后、在下一个干净的 Qt 循环中安全提升
 from aqt.reviewer import Reviewer
 
-orig_get_next_v3_card = Reviewer._get_next_v3_card
+orig_next_card = Reviewer.nextCard
+_is_auto_boosting = False  # 全局防重入互斥锁
 
-def patched_get_next_v3_card(self) -> None:
-    orig_get_next_v3_card(self)
+def patched_nextCard(self) -> None:
+    global _is_auto_boosting
     
-    # 若已有下一张卡片，直接正常展示
+    # 正常提取卡片
+    self.previous_card = self.card
+    self.card = None
+    self._v3 = None
+    self._get_next_v3_card()
+
+    self._previous_card_info.set_card(self.previous_card)
+    self._card_info.set_card(self.card)
+
+    # 1. 若队列中已有下一张卡片，正常展示
     if self.card:
+        if self._reps is None:
+            self._initWeb()
+        self._showQuestion()
         return
 
-    # 若队列耗尽（卡片为空），且启用了自动提升新卡上限
+    # 2. 若队列耗尽（卡片为空），检查是否启用了自动提升新卡上限
     config = get_config()
-    if not config.get("auto_custom_study", True):
-        return
-    if not self.mw.col or not self.mw.col.sched:
+    if not config.get("auto_custom_study", True) or not self.mw.col or not self.mw.col.sched:
+        self.mw.moveToState("overview")
         return
 
     deck_id = self.mw.col.decks.get_current_id()
     if not deck_id:
+        self.mw.moveToState("overview")
         return
 
-    extra = config.get("new_cards_increase", 999)
-    from anki.scheduler import CustomStudyRequest
+    # 前置守卫：精准检查牌组中是否确实还有未学的新卡（避免无新卡时空刷数据库造成负数累加）
     try:
-        req_new = CustomStudyRequest(deck_id=deck_id)
-        req_new.new_limit_delta = extra
-        self.mw.col.sched.custom_study(req_new)
-    except Exception as e:
-        print(f"[Anki遥控器] 原地提升新卡上限异常: {e}")
+        remaining_new = len(self.mw.col.find_cards(f"did:{deck_id} is:new"))
+    except Exception:
+        remaining_new = 0
+
+    if remaining_new <= 0:
+        # 牌组里确实没有未学新卡了，安全切入完成界面
+        self.mw.moveToState("overview")
         return
 
-    # 再次尝试提取新放行的新卡，原地继续
-    orig_get_next_v3_card(self)
-    if self.card:
-        tooltip(f"🔄 已自动提升今日新卡上限 +{extra}，继续学习新卡！")
+    # 若已经在提升中，避免重入
+    if _is_auto_boosting:
+        return
 
-Reviewer._get_next_v3_card = patched_get_next_v3_card
+    _is_auto_boosting = True
+    extra = config.get("new_cards_increase", 999)
+
+    def do_safe_boost():
+        global _is_auto_boosting
+        try:
+            # 确保主窗口仍处于 review 状态且数据库就绪
+            if self.mw.state == "review" and self.mw.col and self.mw.col.sched:
+                from anki.scheduler import CustomStudyRequest
+                req_new = CustomStudyRequest(deck_id=deck_id)
+                req_new.new_limit_delta = extra
+                self.mw.col.sched.custom_study(req_new)
+                tooltip(f"🔄 已自动提升今日新卡上限 +{extra}，继续学习新卡！")
+                # 重新调用 nextCard 提取新放行的新卡，原地无缝继续
+                self.nextCard()
+            else:
+                self.mw.moveToState("overview")
+        except Exception as e:
+            print(f"[Anki遥控器] 自动提升新卡上限异常: {e}")
+            self.mw.moveToState("overview")
+        finally:
+            _is_auto_boosting = False
+
+    # 核心解耦关键：通过 QTimer.singleShot(0) 将写数据库与取卡操作推迟到下一个干净的 Qt 事件循环！
+    # 彻底避开当前答题事务的回调生命周期，杜绝 SQLite 锁死，并避免日切（凌晨4:00）定时器重入冲突
+    QTimer.singleShot(0, do_safe_boost)
+
+Reviewer.nextCard = patched_nextCard
 
 # ----------------- 远程控制扩展服务 -----------------
 import threading
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 class RemoteAIRequestHandler(BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
+
     def do_OPTIONS(self):
         self.send_response(200, "ok")
         self.send_header('Access-Control-Allow-Origin', '*')
         self.send_header('Access-Control-Allow-Methods', 'POST, OPTIONS')
         self.send_header("Access-Control-Allow-Headers", "*")
         self.send_header('Access-Control-Allow-Private-Network', 'true')
+        self.send_header('Connection', 'close')
         self.end_headers()
 
     def do_POST(self):
+        # 安全排空并读取请求体，防止 TCP 管道残留数据
+        content_length = int(self.headers.get('Content-Length', 0))
+        if content_length > 0:
+            self.rfile.read(content_length)
+
         if self.path == '/trigger-ai':
             # 使用 Event 阻塞等待 AI 在主线程执行完毕
             done_event = threading.Event()
@@ -542,6 +599,7 @@ class RemoteAIRequestHandler(BaseHTTPRequestHandler):
             self.send_header('Access-Control-Allow-Origin', '*')
             self.send_header('Access-Control-Allow-Private-Network', 'true')
             self.send_header('Content-Type', 'application/json')
+            self.send_header('Connection', 'close')
             self.end_headers()
             self.wfile.write(b'{"result": "success"}')
         elif self.path == '/auto-continue':
@@ -595,10 +653,12 @@ class RemoteAIRequestHandler(BaseHTTPRequestHandler):
             self.send_header('Access-Control-Allow-Origin', '*')
             self.send_header('Access-Control-Allow-Private-Network', 'true')
             self.send_header('Content-Type', 'application/json')
+            self.send_header('Connection', 'close')
             self.end_headers()
             self.wfile.write(json.dumps(result_data).encode('utf-8'))
         else:
             self.send_response(404)
+            self.send_header('Connection', 'close')
             self.end_headers()
 
     # 隐藏控制台的请求日志输出
@@ -607,7 +667,8 @@ class RemoteAIRequestHandler(BaseHTTPRequestHandler):
 
 def start_remote_server():
     try:
-        server = HTTPServer(('0.0.0.0', 8766), RemoteAIRequestHandler)
+        server = ThreadingHTTPServer(('0.0.0.0', 8766), RemoteAIRequestHandler)
+        server.daemon_threads = True
         threading.Thread(target=server.serve_forever, daemon=True).start()
     except Exception as e:
         print("启动AI遥控扩展服务失败:", e)
